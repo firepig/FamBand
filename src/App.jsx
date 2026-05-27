@@ -1,122 +1,71 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useContext } from 'react'
+import { Routes, Route } from 'react-router-dom'
+import { Row, Col, Spinner } from 'react-bootstrap'
+import { AppProvider, AppContext } from './context/AppContext'
+import Layout from './components/layout/Layout'
+import KanbanBoard from './components/board/KanbanBoard'
+import BulletinBoard from './components/family/BulletinBoard'
+import HomeworkChart from './components/family/HomeworkChart'
+import SnackShop from './components/family/SnackShop'
+import Charts from './components/gamification/Charts'
+import Leaderboard from './components/gamification/Leaderboard'
+import Achievements from './components/gamification/Achievements'
+import PointsBar from './components/gamification/PointsBar'
+import Toaster from './components/common/Toaster'
 
-function App() {
-  const [count, setCount] = useState(0)
+function StatsPage() {
+  return (
+    <div>
+      <h1 className="rt-page-title">SCOREBOARD</h1>
+      <PointsBar />
+      <Row className="mt-4 g-4">
+        <Col lg={8}><Charts /></Col>
+        <Col lg={4}><Leaderboard /></Col>
+      </Row>
+      <Row className="mt-4">
+        <Col><Achievements /></Col>
+      </Row>
+    </div>
+  )
+}
 
+function AppContent() {
+  const { loading } = useContext(AppContext)
+  if (loading) {
+    return (
+      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '80vh' }}>
+        <Spinner animation="border" variant="warning" />
+        <span className="ms-3 fs-5 rt-blink" style={{ fontFamily: 'var(--rt-font-display)' }}>
+          LOADING...
+        </span>
+      </div>
+    )
+  }
   return (
     <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/" element={
+            <>
+              <PointsBar />
+              <KanbanBoard />
+            </>
+          } />
+          <Route path="/bulletin" element={<BulletinBoard />} />
+          <Route path="/homework" element={<HomeworkChart />} />
+          <Route path="/snacks" element={<SnackShop />} />
+          <Route path="/stats" element={<StatsPage />} />
+        </Route>
+      </Routes>
+      <Toaster />
     </>
   )
 }
 
-export default App
+export default function App() {
+  return (
+    <AppProvider>
+      <AppContent />
+    </AppProvider>
+  )
+}

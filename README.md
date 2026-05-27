@@ -1,16 +1,37 @@
-# React + Vite
+# FamBand — Family Chore Heroes
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A gamified family chore tracker that turns household tasks into a fun, rewarding experience. Built with React + Vite on the frontend and Express + SQLite on the backend.
 
-Currently, two official plugins are available:
+## Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Kanban Chore Board** — drag-and-drop tasks across To Do, In Progress, and Done columns
+- **Gamification** — earn points, unlock achievements, and climb the leaderboard
+- **Snack Shop** — redeem points for custom snack rewards
+- **Homework Chart** — track kids' homework progress
+- **Bulletin Board** — leave messages for family members
+- **Photo Uploads** — attach proof-of-completion photos to chores
 
-## React Compiler
+## Getting Started
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+npm install
+npm run dev        # starts both client (Vite) and server (Express)
+```
 
-## Expanding the ESLint configuration
+The app runs at `http://localhost:5173` with the API at `http://localhost:3001`.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start client + server concurrently |
+| `npm run dev:client` | Vite dev server only |
+| `npm run dev:server` | Express API server only |
+| `npm run build` | Production build |
+| `npm start` | Run production server |
+
+## Tech Stack
+
+- **Frontend**: React 19, React Router 7, Bootstrap 5, dnd-kit, Recharts
+- **Backend**: Express 5, better-sqlite3, Multer
+- **Build**: Vite 8
