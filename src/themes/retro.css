@@ -1,0 +1,753 @@
+/* ==========================================================================
+   RETRO ARCADE THEME — FamBand
+   8-bit/16-bit inspired. Swappable via [data-theme="retro"] on <html>.
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&family=Silkscreen:wght@400;700&display=swap');
+
+[data-theme="retro"] {
+  /* Palette — NES/arcade inspired */
+  --rt-bg:           #14132b;   /* deep midnight purple */
+  --rt-bg-2:         #1d1b3a;
+  --rt-bg-3:         #2a2750;
+  --rt-panel:        #1a1838;
+  --rt-panel-light:  #28254d;
+
+  --rt-ink:          #f4f1de;   /* off-white */
+  --rt-ink-dim:      #a8a3c7;
+  --rt-ink-muted:    #6b6890;
+
+  --rt-accent:       #ffcc00;   /* coin yellow */
+  --rt-accent-2:     #ff7b29;   /* power-up orange */
+  --rt-primary:      #4cc9f0;   /* arcade cyan */
+  --rt-secondary:    #b388ff;   /* power-up purple */
+  --rt-success:      #5af78e;   /* mario green */
+  --rt-danger:       #ff3864;   /* boss red/pink */
+  --rt-info:         #4cc9f0;
+  --rt-warning:      #ffcc00;
+
+  --rt-border:       #f4f1de;
+  --rt-border-dark:  #0a0918;
+  --rt-shadow:       #0a0918;
+
+  /* Category palette */
+  --rt-cat-chore:    #b388ff;
+  --rt-cat-homework: #4cc9f0;
+  --rt-cat-outdoor:  #5af78e;
+  --rt-cat-kitchen:  #ff7b29;
+  --rt-cat-other:    #a8a3c7;
+
+  /* Member highlight (override via inline) */
+  --rt-member-color: var(--rt-accent);
+
+  /* Fonts */
+  --rt-font-display: 'Press Start 2P', 'Silkscreen', monospace;
+  --rt-font-ui:      'VT323', 'Press Start 2P', monospace;
+  --rt-font-body:    'VT323', system-ui, monospace;
+
+  /* Sizing */
+  --rt-radius: 0px;          /* pixels are sharp */
+  --rt-radius-soft: 4px;
+  --rt-pixel: 4px;
+  --rt-pixel-2: 8px;
+}
+
+/* ==========================================================================
+   GLOBAL
+   ========================================================================== */
+html[data-theme="retro"],
+html[data-theme="retro"] body {
+  background:
+    radial-gradient(ellipse at top, #1d1b3a 0%, #14132b 60%, #0a0918 100%) fixed;
+  color: var(--rt-ink);
+  font-family: var(--rt-font-body);
+  font-size: 18px;
+  letter-spacing: 0.3px;
+  image-rendering: pixelated;
+  min-height: 100vh;
+}
+
+/* Subtle scanlines overlay */
+html[data-theme="retro"] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0,0,0,0.18) 0px,
+    rgba(0,0,0,0.18) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+}
+
+[data-theme="retro"] h1,
+[data-theme="retro"] h2,
+[data-theme="retro"] h3,
+[data-theme="retro"] h4,
+[data-theme="retro"] h5,
+[data-theme="retro"] h6,
+[data-theme="retro"] .modal-title,
+[data-theme="retro"] .navbar-brand {
+  font-family: var(--rt-font-display);
+  color: var(--rt-ink);
+  letter-spacing: 1px;
+  text-shadow: 2px 2px 0 var(--rt-border-dark);
+  font-weight: 400;
+}
+
+[data-theme="retro"] h1 { font-size: 1.6rem; }
+[data-theme="retro"] h2 { font-size: 1.25rem; }
+[data-theme="retro"] h3 { font-size: 1.05rem; }
+[data-theme="retro"] h4 { font-size: 0.95rem; }
+[data-theme="retro"] h5 { font-size: 0.85rem; }
+[data-theme="retro"] h6 { font-size: 0.75rem; }
+
+[data-theme="retro"] small,
+[data-theme="retro"] .small {
+  font-size: 0.9rem;
+}
+
+/* ==========================================================================
+   PIXEL BORDER UTILITY — chunky 4-pixel "8-bit" look
+   ========================================================================== */
+.rt-pixel-border {
+  border: 3px solid var(--rt-border);
+  box-shadow:
+    0 0 0 3px var(--rt-border-dark),
+    4px 4px 0 3px var(--rt-border-dark);
+  border-radius: var(--rt-radius);
+}
+
+.rt-pixel-border-inset {
+  border: 3px solid var(--rt-border);
+  box-shadow: inset 0 0 0 3px var(--rt-border-dark);
+  border-radius: var(--rt-radius);
+}
+
+/* ==========================================================================
+   CARDS / PANELS
+   ========================================================================== */
+[data-theme="retro"] .card {
+  background: var(--rt-panel);
+  border: 3px solid var(--rt-border) !important;
+  border-radius: var(--rt-radius) !important;
+  box-shadow:
+    0 0 0 3px var(--rt-border-dark),
+    6px 6px 0 3px var(--rt-border-dark) !important;
+  color: var(--rt-ink);
+  transition: transform 0.12s steps(2);
+}
+[data-theme="retro"] .card:hover {
+  transform: translate(-2px, -2px);
+  box-shadow:
+    0 0 0 3px var(--rt-border-dark),
+    8px 8px 0 3px var(--rt-border-dark) !important;
+}
+[data-theme="retro"] .card-header {
+  background: var(--rt-bg-3) !important;
+  color: var(--rt-ink) !important;
+  border-bottom: 3px solid var(--rt-border) !important;
+  font-family: var(--rt-font-display);
+  font-size: 0.85rem;
+  padding: 0.75rem 1rem;
+  letter-spacing: 1px;
+}
+[data-theme="retro"] .card-body {
+  background: var(--rt-panel);
+  color: var(--rt-ink);
+}
+
+/* ==========================================================================
+   BUTTONS — chunky pixel buttons with press effect
+   ========================================================================== */
+[data-theme="retro"] .btn {
+  font-family: var(--rt-font-display);
+  font-size: 0.7rem;
+  letter-spacing: 1px;
+  border-radius: var(--rt-radius) !important;
+  border: 3px solid var(--rt-border-dark) !important;
+  padding: 0.55rem 1rem;
+  font-weight: 400;
+  box-shadow: 4px 4px 0 0 var(--rt-border-dark);
+  transition: transform 0.05s steps(2), box-shadow 0.05s steps(2);
+  position: relative;
+  text-transform: uppercase;
+}
+[data-theme="retro"] .btn:hover {
+  filter: brightness(1.1);
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 0 var(--rt-border-dark);
+}
+[data-theme="retro"] .btn:active,
+[data-theme="retro"] .btn.active {
+  transform: translate(4px, 4px) !important;
+  box-shadow: 0 0 0 0 var(--rt-border-dark) !important;
+}
+[data-theme="retro"] .btn:disabled,
+[data-theme="retro"] .btn.disabled {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
+[data-theme="retro"] .btn-sm {
+  font-size: 0.6rem;
+  padding: 0.35rem 0.7rem;
+  box-shadow: 3px 3px 0 0 var(--rt-border-dark);
+}
+[data-theme="retro"] .btn-lg {
+  font-size: 0.9rem;
+  padding: 0.8rem 1.4rem;
+}
+
+[data-theme="retro"] .btn-primary {
+  background: var(--rt-primary) !important;
+  color: var(--rt-border-dark) !important;
+}
+[data-theme="retro"] .btn-success {
+  background: var(--rt-success) !important;
+  color: var(--rt-border-dark) !important;
+}
+[data-theme="retro"] .btn-warning {
+  background: var(--rt-warning) !important;
+  color: var(--rt-border-dark) !important;
+}
+[data-theme="retro"] .btn-danger {
+  background: var(--rt-danger) !important;
+  color: var(--rt-ink) !important;
+}
+[data-theme="retro"] .btn-info {
+  background: var(--rt-info) !important;
+  color: var(--rt-border-dark) !important;
+}
+[data-theme="retro"] .btn-secondary {
+  background: var(--rt-bg-3) !important;
+  color: var(--rt-ink) !important;
+}
+[data-theme="retro"] .btn-light {
+  background: var(--rt-ink) !important;
+  color: var(--rt-border-dark) !important;
+}
+[data-theme="retro"] .btn-dark {
+  background: var(--rt-border-dark) !important;
+  color: var(--rt-ink) !important;
+}
+[data-theme="retro"] .btn-outline-primary,
+[data-theme="retro"] .btn-outline-success,
+[data-theme="retro"] .btn-outline-warning,
+[data-theme="retro"] .btn-outline-danger,
+[data-theme="retro"] .btn-outline-secondary {
+  background: transparent !important;
+  color: var(--rt-ink) !important;
+  border-color: var(--rt-border) !important;
+}
+[data-theme="retro"] .btn-outline-primary { color: var(--rt-primary) !important; border-color: var(--rt-primary) !important; }
+[data-theme="retro"] .btn-outline-success { color: var(--rt-success) !important; border-color: var(--rt-success) !important; }
+[data-theme="retro"] .btn-outline-warning { color: var(--rt-warning) !important; border-color: var(--rt-warning) !important; }
+[data-theme="retro"] .btn-outline-danger  { color: var(--rt-danger)  !important; border-color: var(--rt-danger)  !important; }
+[data-theme="retro"] .btn-link {
+  color: var(--rt-primary) !important;
+  text-decoration: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+[data-theme="retro"] .btn-link:hover { color: var(--rt-accent) !important; transform: none !important; }
+
+/* ==========================================================================
+   BADGES — pixel pills
+   ========================================================================== */
+[data-theme="retro"] .badge {
+  font-family: var(--rt-font-display);
+  font-size: 0.55rem !important;
+  letter-spacing: 1px;
+  border-radius: var(--rt-radius) !important;
+  border: 2px solid var(--rt-border-dark);
+  padding: 0.35em 0.55em !important;
+  font-weight: 400;
+  text-transform: uppercase;
+}
+[data-theme="retro"] .badge.rounded-pill {
+  border-radius: var(--rt-radius) !important;
+}
+[data-theme="retro"] .badge.bg-warning { background: var(--rt-warning) !important; color: var(--rt-border-dark) !important; }
+[data-theme="retro"] .badge.bg-success { background: var(--rt-success) !important; color: var(--rt-border-dark) !important; }
+[data-theme="retro"] .badge.bg-danger  { background: var(--rt-danger)  !important; color: var(--rt-ink) !important; }
+[data-theme="retro"] .badge.bg-info    { background: var(--rt-info)    !important; color: var(--rt-border-dark) !important; }
+[data-theme="retro"] .badge.bg-primary { background: var(--rt-primary) !important; color: var(--rt-border-dark) !important; }
+[data-theme="retro"] .badge.bg-secondary { background: var(--rt-bg-3) !important; color: var(--rt-ink) !important; }
+[data-theme="retro"] .badge.bg-light   { background: var(--rt-ink)    !important; color: var(--rt-border-dark) !important; }
+
+/* ==========================================================================
+   FORMS — pixel inputs
+   ========================================================================== */
+[data-theme="retro"] .form-control,
+[data-theme="retro"] .form-select,
+[data-theme="retro"] .input-group-text {
+  background: var(--rt-bg-2) !important;
+  color: var(--rt-ink) !important;
+  border: 3px solid var(--rt-border) !important;
+  border-radius: var(--rt-radius) !important;
+  font-family: var(--rt-font-body);
+  font-size: 1rem !important;
+  padding: 0.5rem 0.75rem;
+  box-shadow: inset 2px 2px 0 0 var(--rt-border-dark);
+}
+[data-theme="retro"] .form-control:focus,
+[data-theme="retro"] .form-select:focus {
+  background: var(--rt-bg-3) !important;
+  color: var(--rt-ink) !important;
+  border-color: var(--rt-accent) !important;
+  box-shadow:
+    inset 2px 2px 0 0 var(--rt-border-dark),
+    0 0 0 3px rgba(255, 204, 0, 0.4) !important;
+  outline: none;
+}
+[data-theme="retro"] .form-control::placeholder { color: var(--rt-ink-muted); }
+[data-theme="retro"] .form-control.is-invalid,
+[data-theme="retro"] .form-select.is-invalid {
+  border-color: var(--rt-danger) !important;
+}
+[data-theme="retro"] .form-control:disabled,
+[data-theme="retro"] .form-select:disabled {
+  opacity: 0.5;
+}
+[data-theme="retro"] .form-label {
+  font-family: var(--rt-font-display);
+  font-size: 0.65rem !important;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--rt-accent);
+  margin-bottom: 0.5rem;
+}
+[data-theme="retro"] .input-group-text {
+  background: var(--rt-bg-3) !important;
+  color: var(--rt-accent) !important;
+}
+[data-theme="retro"] .form-check-input {
+  background-color: var(--rt-bg-2);
+  border: 3px solid var(--rt-border) !important;
+  border-radius: 0 !important;
+  width: 1.25em;
+  height: 1.25em;
+}
+[data-theme="retro"] .form-check-input:checked {
+  background-color: var(--rt-success) !important;
+  border-color: var(--rt-border) !important;
+}
+[data-theme="retro"] .form-check-label {
+  color: var(--rt-ink);
+  font-size: 1rem;
+}
+
+/* ==========================================================================
+   MODALS — arcade dialog box
+   ========================================================================== */
+[data-theme="retro"] .modal-content {
+  background: var(--rt-panel) !important;
+  border: 4px solid var(--rt-border) !important;
+  border-radius: var(--rt-radius) !important;
+  box-shadow:
+    0 0 0 4px var(--rt-border-dark),
+    0 0 40px rgba(76, 201, 240, 0.3) !important;
+  color: var(--rt-ink);
+}
+[data-theme="retro"] .modal-header,
+[data-theme="retro"] .modal-footer {
+  border-color: var(--rt-border) !important;
+  background: var(--rt-bg-3);
+}
+[data-theme="retro"] .modal-header {
+  border-bottom: 3px solid var(--rt-border) !important;
+}
+[data-theme="retro"] .modal-footer {
+  border-top: 3px solid var(--rt-border) !important;
+}
+[data-theme="retro"] .modal-body { background: var(--rt-panel); }
+[data-theme="retro"] .btn-close {
+  filter: invert(1);
+}
+
+/* ==========================================================================
+   NAVBAR
+   ========================================================================== */
+[data-theme="retro"] .navbar {
+  background: var(--rt-border-dark) !important;
+  border-bottom: 4px solid var(--rt-accent) !important;
+  box-shadow: 0 4px 0 0 var(--rt-bg-3) !important;
+  padding: 0.6rem 1rem;
+}
+[data-theme="retro"] .navbar-brand {
+  font-family: var(--rt-font-display);
+  font-size: 1rem !important;
+  color: var(--rt-accent) !important;
+  text-shadow: 2px 2px 0 var(--rt-danger);
+}
+[data-theme="retro"] .nav-link {
+  font-family: var(--rt-font-display);
+  font-size: 0.7rem !important;
+  letter-spacing: 1px;
+  color: var(--rt-ink-dim) !important;
+  text-transform: uppercase;
+  padding: 0.5rem 0.8rem !important;
+  border: 2px solid transparent;
+}
+[data-theme="retro"] .nav-link:hover {
+  color: var(--rt-accent) !important;
+  background: var(--rt-bg-3);
+}
+[data-theme="retro"] .nav-link.active {
+  color: var(--rt-accent) !important;
+  background: var(--rt-bg-3);
+  border: 2px solid var(--rt-accent) !important;
+}
+[data-theme="retro"] .dropdown-menu {
+  background: var(--rt-panel) !important;
+  border: 3px solid var(--rt-border) !important;
+  border-radius: var(--rt-radius) !important;
+  box-shadow: 4px 4px 0 0 var(--rt-border-dark) !important;
+}
+[data-theme="retro"] .dropdown-item {
+  color: var(--rt-ink) !important;
+  font-family: var(--rt-font-body);
+}
+[data-theme="retro"] .dropdown-item:hover {
+  background: var(--rt-bg-3) !important;
+  color: var(--rt-accent) !important;
+}
+[data-theme="retro"] .dropdown-divider {
+  border-color: var(--rt-border) !important;
+}
+[data-theme="retro"] .navbar-toggler {
+  border: 2px solid var(--rt-accent) !important;
+  border-radius: 0;
+  padding: 0.25rem 0.5rem;
+}
+
+/* ==========================================================================
+   ALERTS
+   ========================================================================== */
+[data-theme="retro"] .alert {
+  border: 3px solid var(--rt-border-dark) !important;
+  border-radius: var(--rt-radius) !important;
+  font-family: var(--rt-font-body);
+  font-size: 1rem;
+  box-shadow: 4px 4px 0 0 var(--rt-border-dark);
+}
+[data-theme="retro"] .alert-danger {
+  background: var(--rt-danger) !important;
+  color: var(--rt-ink) !important;
+}
+[data-theme="retro"] .alert-success {
+  background: var(--rt-success) !important;
+  color: var(--rt-border-dark) !important;
+}
+[data-theme="retro"] .alert-warning {
+  background: var(--rt-warning) !important;
+  color: var(--rt-border-dark) !important;
+}
+
+/* ==========================================================================
+   PROGRESS — health bar style
+   ========================================================================== */
+[data-theme="retro"] .progress {
+  background: var(--rt-bg-2) !important;
+  border: 2px solid var(--rt-border) !important;
+  border-radius: 0 !important;
+  height: 14px !important;
+  box-shadow: inset 2px 2px 0 var(--rt-border-dark);
+}
+[data-theme="retro"] .progress-bar {
+  background: linear-gradient(180deg, var(--rt-success) 0%, var(--rt-success) 50%, #2fbd5b 50%, #2fbd5b 100%) !important;
+  border-radius: 0 !important;
+  font-family: var(--rt-font-display);
+  font-size: 0.55rem;
+  color: var(--rt-border-dark);
+}
+
+/* ==========================================================================
+   TABLES
+   ========================================================================== */
+[data-theme="retro"] .table {
+  color: var(--rt-ink) !important;
+  border: 3px solid var(--rt-border) !important;
+  background: var(--rt-panel);
+}
+[data-theme="retro"] .table > :not(caption) > * > * {
+  background: transparent !important;
+  border-color: var(--rt-bg-3) !important;
+  color: var(--rt-ink) !important;
+  padding: 0.75rem;
+}
+[data-theme="retro"] .table th {
+  font-family: var(--rt-font-display);
+  font-size: 0.6rem;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--rt-accent) !important;
+  background: var(--rt-bg-3) !important;
+  border-bottom: 3px solid var(--rt-border) !important;
+}
+[data-theme="retro"] .table-warning,
+[data-theme="retro"] .table tr.table-warning td {
+  background: rgba(255, 204, 0, 0.15) !important;
+}
+[data-theme="retro"] .table-hover > tbody > tr:hover > * {
+  background: var(--rt-bg-3) !important;
+  color: var(--rt-accent) !important;
+}
+
+/* ==========================================================================
+   MUTED / TEXT HELPERS
+   ========================================================================== */
+[data-theme="retro"] .text-muted { color: var(--rt-ink-dim) !important; }
+[data-theme="retro"] .text-secondary { color: var(--rt-ink-dim) !important; }
+[data-theme="retro"] .text-dark { color: var(--rt-ink) !important; }
+[data-theme="retro"] .text-light { color: var(--rt-ink) !important; }
+[data-theme="retro"] .text-warning { color: var(--rt-accent) !important; }
+[data-theme="retro"] .text-success { color: var(--rt-success) !important; }
+[data-theme="retro"] .text-danger  { color: var(--rt-danger)  !important; }
+[data-theme="retro"] .text-primary { color: var(--rt-primary) !important; }
+[data-theme="retro"] .text-info    { color: var(--rt-info)    !important; }
+
+[data-theme="retro"] .bg-light { background: var(--rt-bg-3) !important; }
+[data-theme="retro"] .bg-white { background: var(--rt-panel) !important; }
+[data-theme="retro"] .bg-dark  { background: var(--rt-border-dark) !important; }
+
+[data-theme="retro"] .border,
+[data-theme="retro"] .border-top,
+[data-theme="retro"] .border-bottom,
+[data-theme="retro"] .border-start,
+[data-theme="retro"] .border-end {
+  border-color: var(--rt-border) !important;
+}
+
+/* ==========================================================================
+   SPINNER — pixel block style
+   ========================================================================== */
+[data-theme="retro"] .spinner-border {
+  border-style: dashed;
+  border-color: var(--rt-accent);
+  border-right-color: transparent;
+  animation-timing-function: steps(8);
+}
+
+/* ==========================================================================
+   COMPONENT-SPECIFIC RETRO TOUCHES
+   ========================================================================== */
+
+/* Kanban column */
+.rt-column {
+  background: var(--rt-panel);
+  border: 3px solid var(--rt-border);
+  box-shadow:
+    0 0 0 3px var(--rt-border-dark),
+    6px 6px 0 3px var(--rt-border-dark);
+  padding: 16px 12px 12px;
+  min-height: 320px;
+  position: relative;
+}
+.rt-column__title {
+  font-family: var(--rt-font-display);
+  font-size: 0.75rem;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  background: var(--rt-bg-3);
+  border: 2px solid var(--rt-border);
+  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--rt-accent);
+  margin-bottom: 14px;
+}
+.rt-column__count {
+  background: var(--rt-accent);
+  color: var(--rt-border-dark);
+  font-family: var(--rt-font-display);
+  font-size: 0.6rem;
+  padding: 2px 6px;
+  margin-left: 6px;
+  border: 2px solid var(--rt-border-dark);
+}
+.rt-column__empty {
+  text-align: center;
+  padding: 24px 12px;
+  border: 2px dashed var(--rt-ink-muted);
+  color: var(--rt-ink-muted);
+  font-family: var(--rt-font-body);
+  font-size: 1rem;
+}
+.rt-column--todo        { border-top: 6px solid var(--rt-info); }
+.rt-column--in_progress { border-top: 6px solid var(--rt-accent); }
+.rt-column--done        { border-top: 6px solid var(--rt-success); }
+
+/* Chore card */
+.rt-chore {
+  background: var(--rt-panel-light);
+  border: 3px solid var(--rt-border);
+  box-shadow: 4px 4px 0 0 var(--rt-border-dark);
+  padding: 10px 12px;
+  cursor: grab;
+  user-select: none;
+  transition: transform 0.08s steps(2), box-shadow 0.08s steps(2);
+  position: relative;
+}
+.rt-chore:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 0 var(--rt-border-dark);
+}
+.rt-chore:active { cursor: grabbing; }
+.rt-chore__title {
+  font-family: var(--rt-font-display);
+  font-size: 0.72rem;
+  letter-spacing: 0.5px;
+  color: var(--rt-ink);
+  line-height: 1.4;
+  display: block;
+  margin-bottom: 6px;
+  text-shadow: 1px 1px 0 var(--rt-border-dark);
+}
+.rt-chore__points {
+  background: var(--rt-accent);
+  color: var(--rt-border-dark);
+  font-family: var(--rt-font-display);
+  font-size: 0.6rem;
+  padding: 3px 6px;
+  border: 2px solid var(--rt-border-dark);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.rt-chore__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+  font-family: var(--rt-font-body);
+  font-size: 0.85rem;
+  color: var(--rt-ink-dim);
+}
+.rt-chore__cat {
+  font-family: var(--rt-font-display);
+  font-size: 0.5rem;
+  padding: 2px 5px;
+  border: 2px solid var(--rt-border-dark);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--rt-border-dark);
+}
+.rt-chore__avatar {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--rt-border-dark);
+  font-size: 0.8rem;
+  background: var(--rt-bg-3);
+}
+.rt-chore--done .rt-chore__title { opacity: 0.55; text-decoration: line-through; }
+
+/* Page heading */
+.rt-page-title {
+  font-family: var(--rt-font-display);
+  color: var(--rt-accent);
+  text-shadow: 3px 3px 0 var(--rt-danger);
+  letter-spacing: 2px;
+  margin-bottom: 1.5rem;
+  font-size: 1.1rem;
+}
+
+/* View badge (parent / kid view) */
+.rt-view-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--rt-font-display);
+  font-size: 0.55rem;
+  padding: 4px 8px;
+  background: var(--rt-bg-3);
+  border: 2px solid var(--rt-accent);
+  color: var(--rt-accent);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* Coin / star animations */
+@keyframes rt-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.4; }
+}
+.rt-blink { animation: rt-blink 1s steps(2) infinite; }
+
+@keyframes rt-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+.rt-bob { animation: rt-bob 1.2s steps(4) infinite; }
+
+/* Toast container */
+.rt-toast-container {
+  position: fixed;
+  top: 80px;
+  right: 16px;
+  z-index: 11000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 360px;
+}
+.rt-toast {
+  background: var(--rt-panel);
+  border: 3px solid var(--rt-border);
+  box-shadow: 4px 4px 0 0 var(--rt-border-dark);
+  padding: 10px 14px;
+  color: var(--rt-ink);
+  font-family: var(--rt-font-body);
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: rt-toast-in 0.2s steps(4);
+  cursor: pointer;
+}
+.rt-toast--success { border-color: var(--rt-success); }
+.rt-toast--success::before { content: '★'; color: var(--rt-success); font-family: var(--rt-font-display); }
+.rt-toast--error   { border-color: var(--rt-danger); }
+.rt-toast--error::before { content: '!'; color: var(--rt-danger); font-family: var(--rt-font-display); }
+.rt-toast--info    { border-color: var(--rt-primary); }
+.rt-toast--info::before { content: 'i'; color: var(--rt-primary); font-family: var(--rt-font-display); }
+@keyframes rt-toast-in {
+  from { transform: translateX(40px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+
+/* Sticky note overrides — keep paper look but pixel border */
+[data-theme="retro"] .sticky-note {
+  font-family: var(--rt-font-body) !important;
+  color: var(--rt-border-dark) !important;
+  border: 3px solid var(--rt-border-dark) !important;
+  border-radius: 0 !important;
+  box-shadow: 4px 4px 0 0 var(--rt-border-dark) !important;
+}
+[data-theme="retro"] .cork-board {
+  background: var(--rt-bg-2) !important;
+  border: 3px solid var(--rt-border) !important;
+  box-shadow: inset 0 0 0 3px var(--rt-border-dark) !important;
+  border-radius: 0 !important;
+}
+
+/* Responsive tweaks */
+@media (max-width: 768px) {
+  [data-theme="retro"] h1 { font-size: 1.2rem; }
+  [data-theme="retro"] .navbar-brand { font-size: 0.85rem !important; }
+  [data-theme="retro"] .nav-link { font-size: 0.6rem !important; }
+  [data-theme="retro"] .btn { font-size: 0.6rem; padding: 0.45rem 0.7rem; }
+  .rt-chore__title { font-size: 0.65rem; }
+  .rt-column { min-height: 220px; }
+}
