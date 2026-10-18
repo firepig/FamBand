@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
-import { getOccurrences, toDateKey } from './recurrence.js';
+import { getOccurrences, toDateKey, getRotationTurn } from './recurrence.js';
+import { rotationConfig } from './rotation.js';
 
 /**
  * One-instance-at-a-time policy for recurring chores.
@@ -107,6 +108,19 @@ export function materializeChores(db, familyId) {
       const assignments = db.prepare(
         'SELECT member_id FROM chore_template_assignments WHERE template_id = ?'
       ).all(tpl.id).map((r) => r.member_id);
+
+      if (tpl.rotation_enabled) {
+        // Players take turns: one card per day, for whoever is on duty today. If the series
+        // already has a card today (anyone's, any status) leave it alone.
+        const turn = getRotationTurn(rotationConfig(db, tpl), today);
+        if (!turn) continue;
+        const exists = db.prepare(
+          'SELECT 1 FROM chores WHERE template_id = ? AND occurrence_date = ? LIMIT 1'
+        ).get(tpl.id, todayKey);
+        if (exists) continue;
+        if (createInstance(tpl, [turn.memberId], turn.memberId)) inserted += 1;
+        continue;
+      }
 
       if (tpl.per_member) {
         // One instance per assignee

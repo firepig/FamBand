@@ -1,8 +1,9 @@
-import { useState, useContext } from 'react';
+import { useState, useContext, useEffect } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import {
   Badge,
   Button,
+  Form,
   Modal,
   ProgressBar,
   Spinner,
@@ -19,6 +20,7 @@ import {
   FaSyncAlt,
 } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
+import { formatDateKey } from '../../utils/rotation';
 import {
   deleteChore,
   uploadPhoto,
@@ -26,6 +28,9 @@ import {
   rejectChore,
   toggleChecklistItem,
   duplicateChore,
+  fetchTemplate,
+  createTemplateOverride,
+  deleteTemplateOverride,
 } from '../../api';
 import Checklist from '../chores/Checklist';
 import PhotoUpload from '../chores/PhotoUpload';
@@ -75,6 +80,9 @@ export default function ChoreCard({ chore }) {
   const [togglingItem, setTogglingItem] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showDupe, setShowDupe] = useState(false);
+  const [rotTpl, setRotTpl] = useState(null); // the rotating series, loaded when the dialog opens
+  const [swapTo, setSwapTo] = useState('');
+  const [rotBusy, setRotBusy] = useState(false);
 
   const {
     id, title, description, points, status, image,
@@ -84,6 +92,7 @@ export default function ChoreCard({ chore }) {
     template_id, templateId,
   } = chore;
   const isRecurring = !!(template_id || templateId);
+  const rotation = chore.rotation; // present when this card belongs to a rotating series
   const photo = photoProof ?? photo_proof;
   const approved = !!(pointsApproved ?? points_approved);
   const due = dueDate ?? due_date;
@@ -146,6 +155,37 @@ export default function ChoreCard({ chore }) {
       refresh();
     } catch (err) {
       notify?.(err.message || 'Reject failed', 'error');
+    }
+  };
+
+  useEffect(() => {
+    if (!showModal || !rotation || !(template_id || templateId)) return undefined;
+    let cancelled = false;
+    fetchTemplate(template_id || templateId).then((t) => { if (!cancelled) setRotTpl(t); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [showModal, rotation, template_id, templateId]);
+
+  const changeTurn = async (action) => {
+    const tid = template_id || templateId;
+    setRotBusy(true);
+    try {
+      if (action === 'undo') {
+        await deleteTemplateOverride(tid, rotation.onDuty.turnStart);
+        notify?.('Back to the scheduled player', 'success');
+      } else if (action === 'skip') {
+        await createTemplateOverride(tid, { kind: 'skip' });
+        notify?.('Turn skipped — the next player has it', 'success');
+      } else {
+        await createTemplateOverride(tid, { kind: 'swap', memberId: swapTo });
+        notify?.('Turn swapped', 'success');
+      }
+      setSwapTo('');
+      setShowModal(false);
+      refresh();
+    } catch (err) {
+      notify?.(err.message || 'Could not change the turn', 'error');
+    } finally {
+      setRotBusy(false);
     }
   };
 
@@ -214,8 +254,10 @@ export default function ChoreCard({ chore }) {
               </span>
             )}
             {isRecurring && (
-              <span className="rt-chore__cat" style={{ background: 'var(--rt-secondary)' }} title="Repeating quest">
-                <FaSyncAlt size={8} style={{ marginRight: 3 }} />REPEAT
+              <span className="rt-chore__cat" style={{ background: 'var(--rt-secondary)' }} title={rotation && rotation.onDuty
+                ? `Rotating quest. On duty: ${rotation.onDuty.name}. Next: ${rotation.next?.name} from ${formatDateKey(rotation.next?.startsOn)}`
+                : 'Repeating quest'}>
+                <FaSyncAlt size={8} style={{ marginRight: 3 }} />{rotation ? 'ROTATES' : 'REPEAT'}
               </span>
             )}
             {totalItems > 0 && (
@@ -279,6 +321,40 @@ export default function ChoreCard({ chore }) {
               </Badge>
             )}
           </div>
+
+          {rotation && rotation.onDuty && (
+            <div className="mb-3">
+              <div style={{ color: 'var(--rt-ink-dim)', fontSize: '0.7rem', textTransform: 'uppercase', fontFamily: 'var(--rt-font-display)', marginBottom: 6 }}>
+                Rotation
+              </div>
+              <div>
+                On duty: <strong>{rotation.onDuty.name}</strong>
+                {rotation.onDuty.overridden && <span style={{ color: 'var(--rt-ink-dim)' }}> (swapped for this turn)</span>}
+                {' '}until {formatDateKey(rotation.onDuty.turnEnd)}
+              </div>
+              {rotation.next && (
+                <div className="small" style={{ color: 'var(--rt-ink-dim)' }}>
+                  Next: {rotation.next.name} from {formatDateKey(rotation.next.startsOn)}
+                </div>
+              )}
+              {isParent && rotTpl?.rotation?.enabled && (
+                <div className="d-flex flex-wrap gap-2 align-items-center mt-2">
+                  <Form.Select size="sm" style={{ maxWidth: 190 }} value={swapTo} aria-label="Swap this turn to"
+                    onChange={(e) => setSwapTo(e.target.value)}>
+                    <option value="">Swap this turn to…</option>
+                    {(rotTpl.assignments || [])
+                      .filter((a) => a.id !== rotation.onDuty.scheduledMemberId)
+                      .map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </Form.Select>
+                  <Button size="sm" variant="outline-warning" disabled={!swapTo || rotBusy} onClick={() => changeTurn('swap')}>Swap</Button>
+                  <Button size="sm" variant="outline-secondary" disabled={rotBusy} onClick={() => changeTurn('skip')}>Skip this turn</Button>
+                  {rotation.onDuty.overridden && (
+                    <Button size="sm" variant="outline-danger" disabled={rotBusy} onClick={() => changeTurn('undo')}>Undo</Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {assignedMembers.length > 0 && (
             <div className="mb-3">

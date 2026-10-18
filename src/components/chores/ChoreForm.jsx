@@ -7,12 +7,14 @@ import {
   Col,
   InputGroup,
   Alert,
+  Badge,
 } from 'react-bootstrap';
 import { FaPlus, FaTimes, FaImage } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import { createChore, updateChore, createTemplate, updateTemplate, fetchTemplate, makeChoreRepeating, uploadQuestImage } from '../../api';
 import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload, uploadUrl, validateImageType, isCroppable } from '../../utils/images';
 import ImageCropModal from '../common/ImageCropModal';
+import { DOW_NAMES, previewTurns, formatDate } from '../../utils/rotation';
 import Avatar from '../common/Avatar';
 
 const QUICK_POINTS = [5, 10, 20, 50];
@@ -54,6 +56,12 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   const [tplAssignees, setTplAssignees] = useState(null);
   const [tplReady, setTplReady] = useState(true); // false while a series' schedule is loading
   const [tplFailed, setTplFailed] = useState(false);
+  // Rotation: players take turns on a repeating quest.
+  const [rotateOn, setRotateOn] = useState(false);
+  const [everyWeeks, setEveryWeeks] = useState(1);
+  const [startDow, setStartDow] = useState(0);
+  const [firstMember, setFirstMember] = useState(null); // who goes first (new rotations)
+  const [dutyNow, setDutyNow] = useState(null); // who is on duty now (existing rotations)
   // Series cards have two step lists: the card's own, and the series'. Keep each separate.
   const checklistStore = useRef({ single: [], series: null });
   // The card's values when the form opened, so a series save sends only what was changed.
@@ -79,6 +87,11 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       setTplAssignees(null);
       setTplReady(!(editChore.template_id || editChore.templateId));
       setTplFailed(false);
+      setRotateOn(false);
+      setEveryWeeks(1);
+      setStartDow(0);
+      setFirstMember(null);
+      setDutyNow(null);
       setPoints(editChore.points ?? 10);
       const existing = editChore.assignments || editChore.assignedTo || [];
       const existingIds = existing.map((a) => (typeof a === 'object' ? a.id : a));
@@ -118,6 +131,11 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       setDescription('');
       setImage(null);
       setTemplateId(null);
+      setRotateOn(false);
+      setEveryWeeks(1);
+      setStartDow(0);
+      setFirstMember(null);
+      setDutyNow(null);
       setPoints(10);
       setAssignedTo(initialAssignee);
       setCategory('Chore');
@@ -145,6 +163,11 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       setSeriesStart(t.start_date ? String(t.start_date).split('T')[0] : '');
       const ids = (t.assignments || []).map((a) => a.id);
       setTplAssignees(ids);
+      const rot = t.rotation || {};
+      setRotateOn(!!rot.enabled);
+      setEveryWeeks(rot.everyWeeks || 1);
+      setStartDow(rot.startDow ?? 0);
+      setDutyNow(rot.enabled && rot.onDuty ? rot.onDuty.memberId : null);
       const seriesSteps = (t.checklist || []).map((s) => ({ id: s.id, text: s.text, completed: false }));
       checklistStore.current.series = seriesSteps;
       if (scopeRef.current === 'series') {
@@ -173,6 +196,30 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
 
   const editingSeries = isEditing && !!templateId && scope === 'series';
   const repeatControls = !isEditing || (isParent && (!templateId || scope === 'series'));
+
+  // Rotation needs a repeating quest with at least two players.
+  const rotationAvailable = repeatControls && frequency !== 'once' && assignedTo.length >= 2;
+  const rotationActive = rotateOn && rotationAvailable;
+  const rotationFirst = (dutyNow && assignedTo.includes(dutyNow)) ? dutyNow
+    : (firstMember && assignedTo.includes(firstMember)) ? firstMember : assignedTo[0];
+  const rotationPreview = rotationActive
+    ? previewTurns({ order: assignedTo, firstMemberId: rotationFirst, everyWeeks, startDow }, 4)
+    : [];
+  const rotationBody = (includeFirst) => ({
+    enabled: true,
+    everyWeeks: Math.max(1, Number(everyWeeks) || 1),
+    startDow: Number(startDow) || 0,
+    ...(includeFirst ? { firstMemberId: rotationFirst } : {}),
+  });
+  const moveMember = (index, dir) => {
+    setAssignedTo((prev) => {
+      const next = [...prev];
+      const j = index + dir;
+      if (j < 0 || j >= next.length) return prev;
+      [next[index], next[j]] = [next[j], next[index]];
+      return next;
+    });
+  };
 
   const handleMemberToggle = (memberId) => {
     setAssignedTo((prev) =>
@@ -274,6 +321,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           daysOfWeek: (frequency === 'weekly' || frequency === 'custom') ? daysOfWeek : [],
           startDate: seriesStart || null,
           perMember,
+          rotation: rotationActive ? rotationBody(!dutyNow) : { enabled: false },
         });
         notify?.(repeating ? 'Series updated!' : 'Quest no longer repeats', 'success');
       } else if (isEditing) {
@@ -295,11 +343,15 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
             daysOfWeek: (frequency === 'weekly' || frequency === 'custom') ? daysOfWeek : [],
             startDate: dueDate || null,
             perMember,
+            players: assignedTo,
+            ...(rotationActive ? { rotation: rotationBody(true) } : {}),
           });
           notify?.(
-            res.perMemberOverridden
-              ? 'Quest now repeats. It was already started, so it stays one shared quest.'
-              : 'Quest now repeats!',
+            rotationActive
+              ? 'Quest now repeats, and players take turns!'
+              : res.perMemberOverridden
+                ? 'Quest now repeats. It was already started, so it stays one shared quest.'
+                : 'Quest now repeats!',
             'success'
           );
         } else {
@@ -333,6 +385,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           startDate: dueDate || null,
           active: true,
           perMember,
+          ...(rotationActive ? { rotation: rotationBody(true) } : {}),
           ...imageField,
         });
         notify?.('Repeating quest set up!', 'success');
@@ -567,9 +620,73 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
                   This will stop the series. Open quests become ordinary one-off quests; finished ones stay in your history.
                 </small>
               )}
+              {rotationAvailable && (
+                <div className="mt-3 p-2" style={{ border: '2px solid var(--rt-border)' }}>
+                  <Form.Check
+                    type="switch"
+                    id="rotate-toggle"
+                    label="Players take turns (rotate who is on duty)"
+                    checked={rotateOn}
+                    onChange={(e) => setRotateOn(e.target.checked)}
+                  />
+                  {rotateOn && (
+                    <>
+                      <div className="small mt-2 mb-1" style={{ color: 'var(--rt-ink-dim)' }}>Turn order</div>
+                      {assignedTo.map((id, i) => {
+                        const m = members.find((x) => x.id === id);
+                        return (
+                          <div key={id} className="d-flex align-items-center gap-2 mb-1">
+                            <span style={{ width: 22 }}>{i + 1}.</span>
+                            <span style={{ fontSize: '1.1rem' }}><Avatar avatar={m?.avatar} /></span>
+                            <span className="flex-grow-1">{m?.name}</span>
+                            {dutyNow === id && <Badge bg="success">on duty now</Badge>}
+                            {!dutyNow && (
+                              <Form.Check
+                                type="radio"
+                                name="rotation-first"
+                                id={`rotation-first-${id}`}
+                                label="goes first"
+                                checked={rotationFirst === id}
+                                onChange={() => setFirstMember(id)}
+                              />
+                            )}
+                            <Button type="button" size="sm" variant="outline-secondary" aria-label="Move up"
+                              disabled={i === 0} onClick={() => moveMember(i, -1)}>↑</Button>
+                            <Button type="button" size="sm" variant="outline-secondary" aria-label="Move down"
+                              disabled={i === assignedTo.length - 1} onClick={() => moveMember(i, 1)}>↓</Button>
+                          </div>
+                        );
+                      })}
+                      <div className="d-flex flex-wrap align-items-center gap-2 mt-2">
+                        <span>Switches every</span>
+                        <Form.Control
+                          type="number" min={1} max={52} value={everyWeeks} style={{ width: 76 }}
+                          aria-label="Weeks per turn"
+                          onChange={(e) => setEveryWeeks(e.target.value === '' ? '' : Math.max(1, Math.min(52, Number(e.target.value) || 1)))}
+                        />
+                        <span>{Number(everyWeeks) === 1 ? 'week' : 'weeks'} on</span>
+                        <Form.Select value={startDow} style={{ width: 'auto' }} aria-label="Day the turn switches"
+                          onChange={(e) => setStartDow(Number(e.target.value))}>
+                          {DOW_NAMES.map((d, i) => <option key={d} value={i}>{d}</option>)}
+                        </Form.Select>
+                      </div>
+                      <div className="small mt-2" style={{ color: 'var(--rt-ink-dim)' }}>
+                        {rotationPreview.map((t, i) => {
+                          const m = members.find((x) => x.id === t.memberId);
+                          return (
+                            <div key={t.start.toISOString()}>
+                              {i === 0 ? 'This turn' : `From ${formatDate(t.start)}`}: <strong>{m?.name}</strong>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               {frequency !== 'once' && (
                 <>
-                  {assignedTo.length > 1 && (
+                  {assignedTo.length > 1 && !rotationActive && (
                     <div className="mt-2">
                       <Form.Check
                         type="switch"
@@ -581,7 +698,9 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
                     </div>
                   )}
                   <small style={{ color: 'var(--rt-ink-dim)', display: 'block', marginTop: 6 }}>
-                    {perMember && assignedTo.length > 1
+                    {rotationActive
+                      ? 'Each scheduled day, one copy appears for whoever is on duty.'
+                      : perMember && assignedTo.length > 1
                       ? `Each scheduled day, ${assignedTo.length} copies will appear — one per kid.`
                       : 'A copy of this quest will appear on each scheduled day, ready to complete.'}
                   </small>

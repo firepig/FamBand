@@ -6,6 +6,7 @@ import { getDb } from '../db.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
 import { imageUpload, deleteUpload, avatarFilename, AVATAR_IMG_PREFIX } from '../lib/uploads.js';
 import { choreHasProgress } from '../lib/progress.js';
+import { onMemberRemoved } from '../lib/rotation.js';
 
 const router = Router();
 
@@ -183,6 +184,8 @@ router.post('/:id/avatar', requireActiveMember, loadEditableMember, imageUpload(
 //  - earned/spent points history is kept, unattributed (points_ledger.member_id -> NULL)
 function removeMember(db, member, actingMemberId) {
   db.transaction(() => {
+    // Rotating series: re-anchor first so the current turn doesn't change when they leave.
+    onMemberRemoved(db, member.id);
     const spawned = db.prepare(
       `SELECT * FROM chores WHERE family_id = ? AND instance_member_id = ?
          AND template_id IS NOT NULL AND status = 'todo'`

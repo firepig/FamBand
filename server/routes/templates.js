@@ -3,7 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDb } from '../db.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
 import { uploadExists, releaseQuestImage } from '../lib/uploads.js';
-import { normalizeDays, toDateKey } from '../lib/recurrence.js';
+import { normalizeDays, toDateKey, parseDateKey, getRotationTurn } from '../lib/recurrence.js';
+import { rotationConfig, currentTurn, setOrder, rotationSummary, templateOrder, parseRotation, applyRotation } from '../lib/rotation.js';
 import { choreHasProgress } from '../lib/progress.js';
 
 const router = Router();
@@ -17,12 +18,13 @@ function loadTemplate(db, id, familyId) {
     `SELECT fm.id, fm.name, fm.avatar, fm.color, fm.role
      FROM family_members fm
      JOIN chore_template_assignments cta ON fm.id = cta.member_id
-     WHERE cta.template_id = ?`
+     WHERE cta.template_id = ?
+     ORDER BY cta.position ASC, cta.rowid ASC`
   ).all(id);
   const checklist = db.prepare(
     'SELECT * FROM chore_template_checklist WHERE template_id = ? ORDER BY order_index ASC, rowid ASC'
   ).all(id);
-  return { ...t, assignments, checklist };
+  return { ...t, assignments, checklist, rotation: rotationSummary(db, t) };
 }
 
 function memberBelongsToFamily(db, memberId, familyId) {
@@ -35,9 +37,16 @@ function memberBelongsToFamily(db, memberId, familyId) {
 // Cards anyone has started or finished are never touched, and materializeChores
 // won't create a second card for a player who already has one today.
 function reconcileOpenCards(db, templateId, todayKey) {
-  const tpl = db.prepare('SELECT per_member FROM chore_templates WHERE id = ?').get(templateId);
-  const players = db.prepare('SELECT member_id FROM chore_template_assignments WHERE template_id = ?')
+  const tpl = db.prepare('SELECT * FROM chore_templates WHERE id = ?').get(templateId);
+  let players = db.prepare('SELECT member_id FROM chore_template_assignments WHERE template_id = ?')
     .all(templateId).map((r) => r.member_id);
+  let perMember = !!tpl.per_member;
+  if (tpl.rotation_enabled) {
+    // A rotating series has exactly one card per day: the on-duty player's.
+    const turn = currentTurn(db, tpl);
+    players = turn ? [turn.memberId] : [];
+    perMember = true;
+  }
   const open = db.prepare(
     `SELECT * FROM chores WHERE template_id = ? AND status = 'todo'
        AND (occurrence_date IS NULL OR occurrence_date >= ?)`
@@ -47,7 +56,7 @@ function reconcileOpenCards(db, templateId, todayKey) {
   const addAssign = db.prepare('INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)');
   for (const card of open) {
     if (choreHasProgress(db, card)) continue;
-    if (tpl.per_member) {
+    if (perMember) {
       if (!card.instance_member_id || !players.includes(card.instance_member_id)) delCard.run(card.id);
     } else if (card.instance_member_id) {
       delCard.run(card.id); // a per-player card in a now-shared series
@@ -88,7 +97,7 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
       frequency = 'daily', daysOfWeek, interval = 1,
       startDate = null, endDate = null,
       assignedTo = [], checklist = [], active = true,
-      perMember = true, image = null,
+      perMember = true, image = null, rotation,
     } = req.body || {};
 
     if (!title) return res.status(400).json({ error: 'title is required' });
@@ -98,13 +107,17 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
     const db = getDb();
     const id = uuidv4();
     const days = normalizeDays(daysOfWeek);
+    const players = (assignedTo || []).filter((mid, i, a) => a.indexOf(mid) === i && memberBelongsToFamily(db, mid, req.familyId));
+    const rot = parseRotation(rotation);
+    if (rot?.enabled && (frequency === 'once' || players.length < 2)) {
+      return res.status(400).json({ error: 'Rotation needs a repeating quest with at least two players' });
+    }
 
     const insertTpl = db.prepare(
       `INSERT INTO chore_templates
         (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member, image)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
-    const insertAssign = db.prepare('INSERT INTO chore_template_assignments (template_id, member_id) VALUES (?, ?)');
     const insertStep = db.prepare('INSERT INTO chore_template_checklist (id, template_id, text, order_index) VALUES (?, ?, ?, ?)');
 
     db.transaction(() => {
@@ -112,12 +125,11 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
         id, req.familyId, title, description, points, category, req.currentMember.id,
         frequency, days, interval, startDate, endDate, active ? 1 : 0, perMember ? 1 : 0, image || null
       );
-      (assignedTo || []).forEach((mid) => {
-        if (memberBelongsToFamily(db, mid, req.familyId)) insertAssign.run(id, mid);
-      });
+      setOrder(db, id, players);
       (checklist || []).forEach((item, idx) => {
         if (item?.text) insertStep.run(uuidv4(), id, item.text, idx);
       });
+      if (rot) applyRotation(db, id, rot, { enabled: false, order: [] }, new Date());
     })();
 
     res.status(201).json(loadTemplate(db, id, req.familyId));
@@ -130,13 +142,33 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
 router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const existing = db.prepare('SELECT id, image FROM chore_templates WHERE id = ? AND family_id = ?')
+    const existing = db.prepare('SELECT * FROM chore_templates WHERE id = ? AND family_id = ?')
       .get(req.params.id, req.familyId);
     if (!existing) return res.status(404).json({ error: 'Template not found' });
 
     const { title, description, points, category, frequency, daysOfWeek,
-      interval, startDate, endDate, active, assignedTo, checklist, perMember, image } = req.body || {};
+      interval, startDate, endDate, active, assignedTo, checklist, perMember, image, rotation } = req.body || {};
     if (image && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
+
+    const today = new Date();
+    const orderBefore = templateOrder(db, existing.id);
+    const turnBefore = existing.rotation_enabled ? getRotationTurn(rotationConfig(db, existing), today) : null;
+    const before = {
+      enabled: !!existing.rotation_enabled, every: existing.rotation_every_weeks, dow: existing.rotation_start_dow,
+      turn: turnBefore, order: orderBefore,
+    };
+    const players = Array.isArray(assignedTo)
+      ? assignedTo.filter((mid, i, a) => a.indexOf(mid) === i && memberBelongsToFamily(db, mid, req.familyId))
+      : orderBefore;
+    const rot = parseRotation(rotation, {
+      enabled: !!existing.rotation_enabled, everyWeeks: existing.rotation_every_weeks, startDow: existing.rotation_start_dow,
+    });
+    const rotationOnAfter = rot ? rot.enabled : !!existing.rotation_enabled;
+    const freqAfter = frequency !== undefined ? frequency : existing.frequency;
+    // Ending the repeat (frequency 'once') also ends the rotation, so only validate otherwise.
+    if (rotationOnAfter && frequency !== 'once' && (freqAfter === 'once' || players.length < 2)) {
+      return res.status(400).json({ error: 'Rotation needs a repeating quest with at least two players' });
+    }
 
     const setCols = [];
     const setVals = [];
@@ -163,12 +195,16 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
         setVals.push(req.params.id);
         db.prepare(`UPDATE chore_templates SET ${setCols.join(', ')} WHERE id = ?`).run(...setVals);
       }
-      if (Array.isArray(assignedTo)) {
-        db.prepare('DELETE FROM chore_template_assignments WHERE template_id = ?').run(req.params.id);
-        const ins = db.prepare('INSERT INTO chore_template_assignments (template_id, member_id) VALUES (?, ?)');
-        assignedTo.forEach((mid) => {
-          if (memberBelongsToFamily(db, mid, req.familyId)) ins.run(req.params.id, mid);
-        });
+      if (Array.isArray(assignedTo)) setOrder(db, req.params.id, players);
+      if (frequency === 'once') {
+        db.prepare('UPDATE chore_templates SET rotation_enabled = 0 WHERE id = ?').run(req.params.id);
+      } else if (rot) {
+        applyRotation(db, req.params.id, rot, before, today);
+      } else if (existing.rotation_enabled && Array.isArray(assignedTo)) {
+        // Players changed on a rotating series without touching its settings: keep the current turn.
+        applyRotation(db, req.params.id,
+          { enabled: true, everyWeeks: existing.rotation_every_weeks, startDow: existing.rotation_start_dow, firstMemberId: null },
+          before, today);
       }
       if (Array.isArray(checklist)) {
         db.prepare('DELETE FROM chore_template_checklist WHERE template_id = ?').run(req.params.id);
@@ -200,7 +236,7 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
     if (frequency === 'once') {
       db.prepare(`UPDATE chores SET template_id = NULL, occurrence_date = NULL, instance_member_id = NULL WHERE ${openInstances}`)
         .run(req.params.id, todayKey);
-    } else if (Array.isArray(assignedTo) || perMember !== undefined) {
+    } else if (Array.isArray(assignedTo) || perMember !== undefined || rotation !== undefined) {
       reconcileOpenCards(db, req.params.id, todayKey);
     }
 
@@ -225,6 +261,61 @@ router.delete('/:id', requireActiveMember, requireParent, (req, res) => {
   } catch (err) {
     console.error('templates delete', err);
     res.status(500).json({ error: 'Failed to delete template' });
+  }
+});
+
+// Swap or skip one turn of a rotating series (parents). Only that turn changes;
+// the turns after it stay exactly as scheduled.
+router.post('/:id/overrides', requireActiveMember, requireParent, (req, res) => {
+  try {
+    const db = getDb();
+    const tpl = db.prepare('SELECT * FROM chore_templates WHERE id = ? AND family_id = ?').get(req.params.id, req.familyId);
+    if (!tpl) return res.status(404).json({ error: 'Template not found' });
+    if (!tpl.rotation_enabled) return res.status(400).json({ error: 'This quest does not rotate' });
+
+    const { kind, memberId, periodStart } = req.body || {};
+    if (kind !== 'swap' && kind !== 'skip') return res.status(400).json({ error: 'kind must be swap or skip' });
+
+    const cfg = rotationConfig(db, tpl);
+    const today = new Date();
+    const target = periodStart ? parseDateKey(periodStart) : today;
+    if (!target) return res.status(400).json({ error: 'Invalid date' });
+    const turn = getRotationTurn(cfg, target);
+    const current = getRotationTurn(cfg, today);
+    if (!turn || !current) return res.status(400).json({ error: 'Rotation has not started for that date' });
+    if (turn.turnStart < current.turnStart) return res.status(400).json({ error: 'That turn is already over' });
+    const farthest = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7 * 26);
+    if (target > farthest) return res.status(400).json({ error: 'Too far in the future' });
+    if (kind === 'swap' && (!memberId || !cfg.order.includes(memberId) || memberId === turn.scheduledMemberId)) {
+      return res.status(400).json({ error: 'Pick a different player from the rotation' });
+    }
+
+    db.transaction(() => {
+      db.prepare('INSERT OR REPLACE INTO chore_template_overrides (template_id, period_start, kind, member_id) VALUES (?, ?, ?, ?)')
+        .run(tpl.id, turn.turnStart, kind, kind === 'swap' ? memberId : null);
+      if (turn.turnStart === current.turnStart) reconcileOpenCards(db, tpl.id, toDateKey(today));
+    })();
+    res.status(201).json(loadTemplate(db, tpl.id, req.familyId));
+  } catch (err) {
+    console.error('templates override', err);
+    res.status(500).json({ error: 'Failed to save override' });
+  }
+});
+
+router.delete('/:id/overrides/:periodStart', requireActiveMember, requireParent, (req, res) => {
+  try {
+    const db = getDb();
+    const tpl = db.prepare('SELECT * FROM chore_templates WHERE id = ? AND family_id = ?').get(req.params.id, req.familyId);
+    if (!tpl) return res.status(404).json({ error: 'Template not found' });
+    db.transaction(() => {
+      db.prepare('DELETE FROM chore_template_overrides WHERE template_id = ? AND period_start = ?').run(tpl.id, req.params.periodStart);
+      const turn = currentTurn(db, tpl);
+      if (turn && turn.turnStart === req.params.periodStart) reconcileOpenCards(db, tpl.id, toDateKey(new Date()));
+    })();
+    res.json(loadTemplate(db, tpl.id, req.familyId));
+  } catch (err) {
+    console.error('templates override delete', err);
+    res.status(500).json({ error: 'Failed to remove override' });
   }
 });
 

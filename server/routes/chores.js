@@ -4,6 +4,7 @@ import { getDb } from '../db.js';
 import { materializeChores } from '../lib/materialize.js';
 import { getOccurrences, normalizeDays, toDateKey } from '../lib/recurrence.js';
 import { choreHasProgress } from '../lib/progress.js';
+import { rotationSummary, setOrder, parseRotation, applyRotation } from '../lib/rotation.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
 import { imageUpload, deleteUpload, uploadExists, releaseQuestImage } from '../lib/uploads.js';
 
@@ -39,6 +40,25 @@ router.get('/', (req, res) => {
           .all(req.familyId, req.query.status)
       : db.prepare('SELECT * FROM chores WHERE family_id = ? ORDER BY created_at DESC').all(req.familyId);
 
+    // Cards from a rotating series carry who is on duty and who is next.
+    const rotating = new Map(
+      db.prepare('SELECT * FROM chore_templates WHERE family_id = ? AND rotation_enabled = 1').all(req.familyId)
+        .map((t) => [t.id, rotationSummary(db, t)])
+    );
+    const memberName = new Map(
+      db.prepare('SELECT id, name FROM family_members WHERE family_id = ?').all(req.familyId).map((m) => [m.id, m.name])
+    );
+    const rotationFor = (templateId) => {
+      const r = rotating.get(templateId);
+      if (!r) return undefined;
+      return {
+        everyWeeks: r.everyWeeks,
+        startDow: r.startDow,
+        onDuty: r.onDuty && { ...r.onDuty, name: memberName.get(r.onDuty.memberId) },
+        next: r.next && { ...r.next, name: memberName.get(r.next.memberId) },
+      };
+    };
+
     const result = chores.map((chore) => {
       const assignments = db.prepare(
         `SELECT fm.id, fm.name, fm.avatar, fm.color, fm.role
@@ -49,7 +69,7 @@ router.get('/', (req, res) => {
       const checklist = db.prepare(
         'SELECT * FROM checklist_items WHERE chore_id = ? ORDER BY rowid ASC'
       ).all(chore.id);
-      return { ...chore, assignments, checklist };
+      return { ...chore, assignments, checklist, rotation: chore.template_id ? rotationFor(chore.template_id) : undefined };
     });
     res.json(result);
   } catch (err) {
@@ -301,8 +321,18 @@ router.post('/:id/make-repeating', requireActiveMember, requireParent, (req, res
 
     const started = choreHasProgress(db, chore);
 
+    // Optional rotation: players take turns (one card a day for whoever is on duty).
+    const rot = parseRotation(req.body?.rotation);
+    const wantsRotation = !!rot?.enabled;
+    if (wantsRotation && assigned.length < 2) {
+      return res.status(400).json({ error: 'Rotation needs at least two players' });
+    }
+    // Turn order: the caller's order if given, then anyone left over.
+    const requested = Array.isArray(req.body?.players) ? req.body.players.filter((id) => assigned.includes(id)) : [];
+    const turnOrder = [...new Set([...requested, ...assigned])];
+
     // One assignee: per-member and shared are the same thing, so use per-member.
-    let perMemberFinal = assigned.length > 1 ? !!perMember : true;
+    let perMemberFinal = (assigned.length > 1 && !wantsRotation) ? !!perMember : true;
 
     const today = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
     const todayKey = toDateKey(today);
@@ -315,7 +345,10 @@ router.post('/:id/make-repeating', requireActiveMember, requireParent, (req, res
     // started, replace it with per-player cards; if it has, keep it and share the series.
     let removeOriginal = false;
     let perMemberOverridden = false;
-    if (runsToday && assigned.length > 1 && perMemberFinal) {
+    if (wantsRotation) {
+      // One card a day for the on-duty player: replace an untouched card, keep a started one.
+      removeOriginal = runsToday && !started;
+    } else if (runsToday && assigned.length > 1 && perMemberFinal) {
       if (started) { perMemberFinal = false; perMemberOverridden = true; } else { removeOriginal = true; }
     }
 
@@ -329,8 +362,8 @@ router.post('/:id/make-repeating', requireActiveMember, requireParent, (req, res
         tplId, req.familyId, chore.title, chore.description || '', chore.points, chore.category || 'Chore',
         req.currentMember.id, frequency, days, interval, startDate, endDate, perMemberFinal ? 1 : 0, chore.image || null
       );
-      const insAssign = db.prepare('INSERT INTO chore_template_assignments (template_id, member_id) VALUES (?, ?)');
-      assigned.forEach((mid) => insAssign.run(tplId, mid));
+      setOrder(db, tplId, turnOrder);
+      if (wantsRotation) applyRotation(db, tplId, rot, { enabled: false, order: [] }, new Date());
       const insStep = db.prepare('INSERT INTO chore_template_checklist (id, template_id, text, order_index) VALUES (?, ?, ?, ?)');
       steps.forEach((st, idx) => { if (st.text) insStep.run(uuidv4(), tplId, st.text, idx); });
 
@@ -339,7 +372,7 @@ router.post('/:id/make-repeating', requireActiveMember, requireParent, (req, res
           db.prepare('DELETE FROM chores WHERE id = ?').run(chore.id);
         } else {
           db.prepare('UPDATE chores SET template_id = ?, occurrence_date = ?, instance_member_id = ? WHERE id = ?')
-            .run(tplId, todayKey, perMemberFinal ? (assigned[0] ?? null) : null, chore.id);
+            .run(tplId, todayKey, (perMemberFinal && !wantsRotation) ? (assigned[0] ?? null) : null, chore.id);
         }
       }
     })();
@@ -407,14 +440,17 @@ router.post('/:id/duplicate', requireActiveMember, requireParent, (req, res) => 
         db.transaction(() => {
           db.prepare(
             `INSERT INTO chore_templates
-              (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member, image)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member, image,
+               rotation_enabled, rotation_every_weeks, rotation_start_dow, rotation_anchor_date, rotation_anchor_member)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
             tplId, req.familyId, tpl.title, tpl.description || '', tpl.points, tpl.category,
             req.currentMember.id, tpl.frequency, tpl.days_of_week || '', tpl.interval, tpl.start_date,
-            tpl.end_date, tpl.active, tpl.per_member, tpl.image || null
+            tpl.end_date, tpl.active, tpl.per_member, tpl.image || null,
+            tpl.rotation_enabled || 0, tpl.rotation_every_weeks || 1, tpl.rotation_start_dow || 0,
+            tpl.rotation_anchor_date || null, tpl.rotation_anchor_member || null
           );
-          db.prepare('INSERT INTO chore_template_assignments (template_id, member_id) SELECT ?, member_id FROM chore_template_assignments WHERE template_id = ?')
+          db.prepare('INSERT INTO chore_template_assignments (template_id, member_id, position) SELECT ?, member_id, position FROM chore_template_assignments WHERE template_id = ?')
             .run(tplId, tpl.id);
           const steps = db.prepare('SELECT text, order_index FROM chore_template_checklist WHERE template_id = ? ORDER BY order_index ASC, rowid ASC').all(tpl.id);
           const insStep = db.prepare('INSERT INTO chore_template_checklist (id, template_id, text, order_index) VALUES (?, ?, ?, ?)');
