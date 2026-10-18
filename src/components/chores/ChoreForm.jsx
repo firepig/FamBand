@@ -11,7 +11,7 @@ import {
 import { FaPlus, FaTimes, FaImage } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import { createChore, updateChore, createTemplate, uploadQuestImage } from '../../api';
-import { ACCEPTED_IMAGE_TYPES, MAX_MB, validateImageFile, uploadUrl } from '../../utils/images';
+import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload, uploadUrl } from '../../utils/images';
 import Avatar from '../common/Avatar';
 
 const QUICK_POINTS = [5, 10, 20, 50];
@@ -116,14 +116,14 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     setChecklist((p) => p.map((i) => (i.id === id ? { ...i, text } : i)));
 
   const handleImageFile = async (e) => {
-    const file = e.target.files?.[0];
+    const picked = e.target.files?.[0];
     e.target.value = '';
-    if (!file) return;
-    const problem = validateImageFile(file, MAX_MB.quest);
-    if (problem) { setError(problem); return; }
+    if (!picked) return;
     setError(null);
     setImageBusy(true);
     try {
+      const { file, error: problem } = await prepareImageForUpload(picked, 'quest');
+      if (problem) { setError(problem); return; }
       const res = await uploadQuestImage(file);
       setImage(res.image);
     } catch (err) {
@@ -283,7 +283,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
                   </Button>
                 )}
               </div>
-              <Form.Text className="text-muted">JPEG, PNG, GIF or WebP, up to {MAX_MB.quest} MB</Form.Text>
+              <Form.Text className="text-muted">JPEG, PNG, GIF or WebP. Large pictures are shrunk automatically.</Form.Text>
             </Form.Group>
           )}
 

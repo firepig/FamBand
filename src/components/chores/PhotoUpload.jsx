@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { Button, Spinner } from 'react-bootstrap';
 import { FaCamera, FaUpload, FaTimes } from 'react-icons/fa';
-import { ACCEPTED_IMAGE_TYPES, MAX_MB, validateImageFile } from '../../utils/images';
+import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload } from '../../utils/images';
 
 export default function PhotoUpload({ currentPhoto, onUpload }) {
   const [preview, setPreview] = useState(null);
@@ -10,13 +10,13 @@ export default function PhotoUpload({ currentPhoto, onUpload }) {
   const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const problem = validateImageFile(file, MAX_MB.photo);
+  const handleFileSelect = async (e) => {
+    const picked = e.target.files?.[0];
+    e.target.value = '';
+    if (!picked) return;
+    const { file, error: problem } = await prepareImageForUpload(picked, 'photo');
     if (problem) {
       setError(problem);
-      e.target.value = '';
       return;
     }
     setError(null);

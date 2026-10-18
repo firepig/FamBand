@@ -4,7 +4,7 @@ import { FaUpload } from 'react-icons/fa'
 import AppContext from '../../context/AppContext'
 import { updateMember, uploadAvatar } from '../../api'
 import { AVATARS, COLORS } from '../../utils/memberOptions'
-import { ACCEPTED_IMAGE_TYPES, MAX_MB, validateImageFile, isImageAvatar } from '../../utils/images'
+import { ACCEPTED_IMAGE_TYPES, MAX_MB, prepareImageForUpload, isImageAvatar } from '../../utils/images'
 import Avatar from '../common/Avatar'
 
 // Edit one member's name, color and avatar (emoji or uploaded image).
@@ -25,14 +25,14 @@ export default function MemberEditor({ member, canRename, onSaved }) {
   }
 
   const handleFile = async (e) => {
-    const file = e.target.files?.[0]
+    const picked = e.target.files?.[0]
     e.target.value = ''
-    if (!file) return
-    const problem = validateImageFile(file, MAX_MB.avatar)
-    if (problem) { setError(problem); return }
+    if (!picked) return
     setError('')
     setUploading(true)
     try {
+      const { file, error: problem } = await prepareImageForUpload(picked, 'avatar')
+      if (problem) { setError(problem); return }
       const updated = await uploadAvatar(member.id, file)
       setAvatar(updated.avatar)
       notify?.('Avatar updated!', 'success')
@@ -89,7 +89,7 @@ export default function MemberEditor({ member, canRename, onSaved }) {
               onClick={() => fileRef.current?.click()}>
               {uploading ? <Spinner animation="border" size="sm" /> : <><FaUpload className="me-1" />Upload picture</>}
             </Button>
-            <div className="small text-muted mt-1">JPEG, PNG, GIF or WebP, up to {MAX_MB.avatar} MB</div>
+            <div className="small text-muted mt-1">JPEG, PNG, GIF or WebP. Large pictures are shrunk automatically.</div>
           </div>
         </div>
         <div className="small text-muted mb-1">…or pick an emoji:</div>

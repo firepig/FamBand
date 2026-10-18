@@ -4,6 +4,8 @@ export const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/gif,image/webp'
 const ALLOWED = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp'])
 
 export const MAX_MB = { avatar: 2, quest: 5, photo: 5 }
+// Longest side, in pixels, that we resize down to before uploading.
+export const MAX_DIM = { avatar: 512, quest: 1600, photo: 1600 }
 
 // Returns an error string, or null when the file looks acceptable.
 export function validateImageFile(file, maxMB) {
@@ -31,4 +33,77 @@ export function avatarImageUrl(avatar) {
 // Plain-text stand-in for places that can only show text (<option>, subtitles).
 export function avatarText(avatar) {
   return !avatar || isImageAvatar(avatar) ? '👤' : avatar
+}
+
+function loadBitmap(file) {
+  // 'from-image' applies EXIF rotation so phone photos aren't sideways.
+  if (typeof createImageBitmap === 'function') {
+    return createImageBitmap(file, { imageOrientation: 'from-image' })
+  }
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img) }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not read that image')) }
+    img.src = url
+  })
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality))
+}
+
+// Shrinks an image in the browser when it is larger than `kind` allows, either
+// in pixels or bytes. Small images are returned untouched (no recompression).
+// Animated GIFs are never touched, since a canvas would flatten them.
+async function downscale(file, maxDim) {
+  const bitmap = await loadBitmap(file)
+  const w = bitmap.width
+  const h = bitmap.height
+  const scale = Math.min(1, maxDim / Math.max(w, h))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(w * scale))
+  canvas.height = Math.max(1, Math.round(h * scale))
+  const ctx = canvas.getContext('2d')
+  if (file.type === 'image/jpeg') {
+    ctx.fillStyle = '#fff' // JPEG has no alpha
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+  }
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+  bitmap.close?.()
+
+  // Keep JPEG as JPEG. Everything else prefers WebP (keeps transparency); browsers
+  // that cannot encode WebP (Safari) silently give PNG back, which is fine.
+  const wanted = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/webp'
+  const blob = await canvasToBlob(canvas, wanted, 0.85)
+  if (!blob) throw new Error('Could not process that image')
+  const ext = { 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/png': 'png' }[blob.type] || 'jpg'
+  const base = (file.name || 'image').replace(/\.[^.]+$/, '')
+  return new File([blob], `${base}.${ext}`, { type: blob.type })
+}
+
+// Validate, then resize if needed. Resolves to { file } ready to upload, or { error }.
+export async function prepareImageForUpload(file, kind) {
+  const maxMB = MAX_MB[kind]
+  const maxDim = MAX_DIM[kind]
+  if (!file) return { error: 'No file selected' }
+  if (!ALLOWED.has(file.type)) return { error: 'Use a JPEG, PNG, GIF or WebP image' }
+
+  let out = file
+  if (file.type !== 'image/gif') {
+    try {
+      const bitmap = await loadBitmap(file)
+      const tooBig = Math.max(bitmap.width, bitmap.height) > maxDim
+      bitmap.close?.()
+      if (tooBig || file.size > maxMB * 1024 * 1024) {
+        const resized = await downscale(file, maxDim)
+        // Never make a small file bigger just because we re-encoded it.
+        out = resized.size < file.size || tooBig ? resized : file
+      }
+    } catch (err) {
+      return { error: err.message || 'Could not read that image' }
+    }
+  }
+  const problem = validateImageFile(out, maxMB)
+  return problem ? { error: problem } : { file: out }
 }
