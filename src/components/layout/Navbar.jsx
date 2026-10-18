@@ -7,7 +7,7 @@ import { fetchPoints } from '../../api';
 import Avatar from '../common/Avatar';
 
 export default function Navbar() {
-  const { members, currentMember, switchMember, logout, isParent } = useContext(AppContext);
+  const { members, currentMember, switchMember, logout, isParent, chores, stats, snacks } = useContext(AppContext);
   const location = useLocation();
   const [points, setPoints] = useState(null);
   const [pointsLoading, setPointsLoading] = useState(false);
@@ -15,16 +15,15 @@ export default function Navbar() {
   useEffect(() => {
     if (!currentMember) return;
     let cancelled = false;
-    setPointsLoading(true);
     fetchPoints(currentMember.id)
       .then((data) => {
         if (cancelled) return;
-        setPoints(typeof data.points === 'number' ? data.points : data.total ?? 0);
+        setPoints(typeof data.balance === 'number' ? data.balance : 0);
         setPointsLoading(false);
       })
       .catch(() => { if (!cancelled) { setPoints(0); setPointsLoading(false); } });
     return () => { cancelled = true; };
-  }, [currentMember]);
+  }, [currentMember?.id, chores, stats, snacks]);
 
   const navLinks = [
     { label: 'BOARD', path: '/' },
