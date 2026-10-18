@@ -146,7 +146,7 @@ export function initializeDb() {
     CREATE TABLE IF NOT EXISTS points_ledger (
       id TEXT PRIMARY KEY,
       family_id TEXT NOT NULL,
-      member_id TEXT NOT NULL,
+      member_id TEXT,
       amount INTEGER NOT NULL,
       type TEXT NOT NULL CHECK(type IN ('earned','spent','escrow','released')),
       chore_id TEXT,
@@ -154,7 +154,7 @@ export function initializeDb() {
       approved_by TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
-      FOREIGN KEY (member_id) REFERENCES family_members(id)
+      FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS bulletin_posts (
@@ -239,6 +239,34 @@ export function initializeDb() {
     const cols = db.prepare(`PRAGMA table_info(${table})`).all();
     if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
   };
+  // points_ledger.member_id used to be NOT NULL with no delete rule, which made it
+  // impossible to remove a member. Rebuild once so history can outlive the member
+  // (the row is kept and simply loses its owner). SQLite can't alter this in place.
+  const ledgerMemberCol = db.prepare('PRAGMA table_info(points_ledger)').all().find((c) => c.name === 'member_id');
+  if (ledgerMemberCol && ledgerMemberCol.notnull) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE points_ledger_new (
+          id TEXT PRIMARY KEY,
+          family_id TEXT NOT NULL,
+          member_id TEXT,
+          amount INTEGER NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('earned','spent','escrow','released')),
+          chore_id TEXT,
+          description TEXT,
+          approved_by TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
+          FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE SET NULL
+        );
+        INSERT INTO points_ledger_new (id, family_id, member_id, amount, type, chore_id, description, approved_by, created_at)
+          SELECT id, family_id, member_id, amount, type, chore_id, description, approved_by, created_at FROM points_ledger;
+        DROP TABLE points_ledger;
+        ALTER TABLE points_ledger_new RENAME TO points_ledger;
+        CREATE INDEX IF NOT EXISTS idx_ledger_family ON points_ledger(family_id);
+      `);
+    })();
+  }
   addColumnIfMissing('chores', 'image', 'TEXT');
   addColumnIfMissing('chore_templates', 'image', 'TEXT');
 

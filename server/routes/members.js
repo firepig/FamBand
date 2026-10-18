@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { getDb } from '../db.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
 import { imageUpload, deleteUpload, avatarFilename, AVATAR_IMG_PREFIX } from '../lib/uploads.js';
+import { choreHasProgress } from '../lib/progress.js';
 
 const router = Router();
 
@@ -174,6 +175,42 @@ router.post('/:id/avatar', requireActiveMember, loadEditableMember, imageUpload(
   }
 });
 
+// Removes a member and everything that points at them, in one transaction:
+//  - quests/series are unlinked from them; untouched cards generated just for them are
+//    deleted, and a series left with no players is paused
+//  - quests and series they created are kept and credited to whoever is removing them
+//  - their own content (posts, homework, snacks, achievements, pending points) goes with them
+//  - earned/spent points history is kept, unattributed (points_ledger.member_id -> NULL)
+function removeMember(db, member, actingMemberId) {
+  db.transaction(() => {
+    const spawned = db.prepare(
+      `SELECT * FROM chores WHERE family_id = ? AND instance_member_id = ?
+         AND template_id IS NOT NULL AND status = 'todo'`
+    ).all(member.family_id, member.id);
+    for (const card of spawned) {
+      if (!choreHasProgress(db, card)) db.prepare('DELETE FROM chores WHERE id = ?').run(card.id);
+    }
+    db.prepare('DELETE FROM chore_assignments WHERE member_id = ?').run(member.id);
+    db.prepare('DELETE FROM chore_template_assignments WHERE member_id = ?').run(member.id);
+    db.prepare(
+      `UPDATE chore_templates SET active = 0
+         WHERE family_id = ? AND active = 1
+           AND NOT EXISTS (SELECT 1 FROM chore_template_assignments a WHERE a.template_id = chore_templates.id)`
+    ).run(member.family_id);
+
+    db.prepare('UPDATE chores SET created_by = ? WHERE created_by = ?').run(actingMemberId, member.id);
+    db.prepare('UPDATE chore_templates SET created_by = ? WHERE created_by = ?').run(actingMemberId, member.id);
+
+    db.prepare('DELETE FROM bulletin_posts WHERE author_id = ?').run(member.id);
+    db.prepare('DELETE FROM homework_items WHERE member_id = ?').run(member.id);
+    db.prepare('DELETE FROM member_snacks WHERE member_id = ?').run(member.id);
+    db.prepare('DELETE FROM member_achievements WHERE member_id = ?').run(member.id);
+    db.prepare("DELETE FROM points_ledger WHERE member_id = ? AND type = 'escrow'").run(member.id);
+
+    db.prepare('DELETE FROM family_members WHERE id = ?').run(member.id);
+  })();
+}
+
 // DELETE /:id — remove a member (parent only). Cannot remove the member linked to the current user.
 router.delete('/:id', requireActiveMember, requireParent, (req, res) => {
   try {
@@ -184,7 +221,10 @@ router.delete('/:id', requireActiveMember, requireParent, (req, res) => {
     if (target.user_id === req.userId) {
       return res.status(400).json({ error: 'Cannot remove the account owner member' });
     }
-    db.prepare('DELETE FROM family_members WHERE id = ?').run(target.id);
+    if (target.id === req.currentMember.id) {
+      return res.status(400).json({ error: 'Switch to another player before removing this one' });
+    }
+    removeMember(db, target, req.currentMember.id);
     deleteUpload('avatar', avatarFilename(target.avatar));
     res.json({ ok: true });
   } catch (err) {

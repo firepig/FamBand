@@ -109,7 +109,12 @@ export default function MemberManager() {
       <Modal show={!!deleteTarget} onHide={() => setDeleteTarget(null)} centered>
         <Modal.Header closeButton><Modal.Title>Remove {deleteTarget?.name}?</Modal.Title></Modal.Header>
         <Modal.Body>
-          <p>This will remove the member and unlink their chores. Points history is kept but will no longer be attributed to anyone.</p>
+          <p>This removes the member and unlinks them from every quest and repeating quest.</p>
+          <ul className="small mb-0">
+            <li>Repeating quests left with no players are paused.</li>
+            <li>Their earned and spent points history is kept but shown as “Former member”.</li>
+            <li>Their bulletin posts, homework, snacks, achievements and points waiting for approval are deleted.</li>
+          </ul>
         </Modal.Body>
         <Modal.Footer>
           <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
