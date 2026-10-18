@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getDb } from '../db.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
+import { uploadExists, releaseQuestImage } from '../lib/uploads.js';
 
 const router = Router();
 
@@ -66,10 +67,11 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
       frequency = 'daily', daysOfWeek, interval = 1,
       startDate = null, endDate = null,
       assignedTo = [], checklist = [], active = true,
-      perMember = true,
+      perMember = true, image = null,
     } = req.body || {};
 
     if (!title) return res.status(400).json({ error: 'title is required' });
+    if (image && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
     if (!VALID_FREQ.has(frequency)) return res.status(400).json({ error: `Invalid frequency: ${frequency}` });
 
     const db = getDb();
@@ -78,8 +80,8 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
 
     const insertTpl = db.prepare(
       `INSERT INTO chore_templates
-        (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member, image)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertAssign = db.prepare('INSERT INTO chore_template_assignments (template_id, member_id) VALUES (?, ?)');
     const insertStep = db.prepare('INSERT INTO chore_template_checklist (id, template_id, text, order_index) VALUES (?, ?, ?, ?)');
@@ -87,7 +89,7 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
     db.transaction(() => {
       insertTpl.run(
         id, req.familyId, title, description, points, category, req.currentMember.id,
-        frequency, days, interval, startDate, endDate, active ? 1 : 0, perMember ? 1 : 0
+        frequency, days, interval, startDate, endDate, active ? 1 : 0, perMember ? 1 : 0, image || null
       );
       (assignedTo || []).forEach((mid) => {
         if (memberBelongsToFamily(db, mid, req.familyId)) insertAssign.run(id, mid);
@@ -107,12 +109,13 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
 router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const existing = db.prepare('SELECT id FROM chore_templates WHERE id = ? AND family_id = ?')
+    const existing = db.prepare('SELECT id, image FROM chore_templates WHERE id = ? AND family_id = ?')
       .get(req.params.id, req.familyId);
     if (!existing) return res.status(404).json({ error: 'Template not found' });
 
     const { title, description, points, category, frequency, daysOfWeek,
-      interval, startDate, endDate, active, assignedTo, checklist, perMember } = req.body || {};
+      interval, startDate, endDate, active, assignedTo, checklist, perMember, image } = req.body || {};
+    if (image && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
 
     const setCols = [];
     const setVals = [];
@@ -132,6 +135,7 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
     if (endDate !== undefined) push('end_date', endDate);
     if (active !== undefined) push('active', active ? 1 : 0);
     if (perMember !== undefined) push('per_member', perMember ? 1 : 0);
+    if (image !== undefined) push('image', image || null);
 
     db.transaction(() => {
       if (setCols.length) {
@@ -154,6 +158,8 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
       }
     })();
 
+    if (image !== undefined && existing.image && existing.image !== image) releaseQuestImage(db, existing.image);
+
     res.json(loadTemplate(db, req.params.id, req.familyId));
   } catch (err) {
     console.error('templates patch', err);
@@ -164,10 +170,11 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
 router.delete('/:id', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const t = db.prepare('SELECT id FROM chore_templates WHERE id = ? AND family_id = ?')
+    const t = db.prepare('SELECT id, image FROM chore_templates WHERE id = ? AND family_id = ?')
       .get(req.params.id, req.familyId);
     if (!t) return res.status(404).json({ error: 'Template not found' });
     db.prepare('DELETE FROM chore_templates WHERE id = ?').run(req.params.id);
+    releaseQuestImage(db, t.image);
     res.json({ message: 'Template deleted' });
   } catch (err) {
     console.error('templates delete', err);

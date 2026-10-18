@@ -15,6 +15,7 @@ import {
 } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import { fetchPoints } from '../../api';
+import Avatar from '../common/Avatar';
 
 function hasStreak(chores, memberId) {
   const now = new Date();
@@ -244,7 +245,7 @@ export default function Leaderboard() {
         {mvpOfWeek && (
           <Badge bg="light" text="dark" className="ms-auto d-flex align-items-center gap-1" pill>
             <FaAward className="text-warning" />
-            MVP: {mvpOfWeek.avatar} {mvpOfWeek.name}
+            MVP: <Avatar avatar={mvpOfWeek.avatar} /> {mvpOfWeek.name}
           </Badge>
         )}
       </Card.Header>
@@ -267,7 +268,7 @@ export default function Leaderboard() {
                   <FaCrown size={20} className="text-warning" />
                 </div>
                 <div className="d-flex align-items-center gap-2 flex-grow-1">
-                  <span style={{ fontSize: '1.8rem' }}>{parent.avatar || '👤'}</span>
+                  <span style={{ fontSize: '1.8rem' }}><Avatar avatar={parent.avatar} /></span>
                   <div>
                     <div className="fw-semibold">{parent.name}</div>
                     <Badge bg="secondary" size="sm" pill>Parent</Badge>
@@ -332,7 +333,7 @@ export default function Leaderboard() {
                           transition: 'font-size 0.3s',
                         }}
                       >
-                        {member.avatar || '👤'}
+                        <Avatar avatar={member.avatar} />
                       </span>
                       <div>
                         <div className={isCurrentMember ? 'fw-bold' : ''} style={{ fontSize: '0.95rem' }}>

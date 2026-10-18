@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Container, Card, Row, Col, Modal, Form, Button, Alert, Spinner } from 'react-bootstrap'
 import AppContext from '../../context/AppContext'
 import { fetchMembers } from '../../api'
+import Avatar from '../common/Avatar';
 
 export default function SelectMember() {
   const { selectMember, logout, user, family } = useContext(AppContext)
@@ -59,7 +60,7 @@ export default function SelectMember() {
               className="text-center h-100"
             >
               <Card.Body>
-                <div style={{ fontSize: '3rem' }}>{m.avatar || '👤'}</div>
+                <div style={{ fontSize: '3rem' }}><Avatar avatar={m.avatar} /></div>
                 <div className="fw-bold">{m.name}</div>
                 <div className="small text-muted text-uppercase">{m.role}</div>
                 {!m.has_pin && <div className="small text-danger mt-1">No PIN set</div>}

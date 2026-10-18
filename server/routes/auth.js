@@ -19,6 +19,14 @@ const loginLimiter = rateLimit({
   message: { error: 'Too many login attempts, try again in 15 minutes' },
 });
 
+const changePasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts, try again in 15 minutes' },
+});
+
 const pinLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 5,
@@ -221,6 +229,39 @@ router.post('/reset-password', loginLimiter, async (req, res, next) => {
     res.json({ ok: true, remainingRecoveryCodes: remaining });
   } catch (err) {
     if (err instanceof z.ZodError) return res.status(400).json({ error: 'Invalid input' });
+    next(err);
+  }
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(8).max(200),
+});
+
+// Change the family account password (signed-in parent; requires the current password).
+router.post('/change-password', changePasswordLimiter, requireUser, requireActiveMember, async (req, res, next) => {
+  try {
+    if (req.currentMember.role !== 'parent') return res.status(403).json({ error: 'Parent only' });
+    const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+    const db = getDb();
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: 'New password must be different' });
+    }
+    const newHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, user.id);
+    // Sign out every other device; keep the one that just changed the password.
+    const signedOut = db.prepare(
+      "DELETE FROM sessions WHERE sid != ? AND json_extract(sess, '$.userId') = ?"
+    ).run(req.sessionID, user.id).changes;
+    res.json({ ok: true, signedOutOtherDevices: signedOut });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: err.issues[0]?.path?.[0] === 'newPassword' ? 'New password must be at least 8 characters' : 'Invalid input' });
+    }
     next(err);
   }
 });

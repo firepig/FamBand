@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext } from 'react';
+import { useState, useEffect, useContext, useRef } from 'react';
 import {
   Modal,
   Form,
@@ -8,9 +8,12 @@ import {
   InputGroup,
   Alert,
 } from 'react-bootstrap';
-import { FaPlus, FaTimes } from 'react-icons/fa';
+import { FaPlus, FaTimes, FaImage } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
-import { createChore, updateChore, createTemplate } from '../../api';
+import { createChore, updateChore, createTemplate, uploadQuestImage } from '../../api';
+import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload, uploadUrl, validateImageType, isCroppable } from '../../utils/images';
+import ImageCropModal from '../common/ImageCropModal';
+import Avatar from '../common/Avatar';
 
 const QUICK_POINTS = [5, 10, 20, 50];
 const CATEGORIES = ['Chore', 'Homework', 'Outdoor', 'Kitchen', 'Other'];
@@ -40,6 +43,10 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   const [perMember, setPerMember] = useState(true);
   const [validated, setValidated] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [image, setImage] = useState(null); // stored filename from /api/uploads/quest
+  const [imageBusy, setImageBusy] = useState(false);
+  const [cropFile, setCropFile] = useState(null);
+  const imageInputRef = useRef(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -48,6 +55,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     if (editChore) {
       setTitle(editChore.title || '');
       setDescription(editChore.description || '');
+      setImage(editChore.image || null);
       setPoints(editChore.points ?? 10);
       const existing = editChore.assignments || editChore.assignedTo || [];
       setAssignedTo(existing.map((a) => (typeof a === 'object' ? a.id : a)));
@@ -76,6 +84,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       }
       setTitle('');
       setDescription('');
+      setImage(null);
       setPoints(10);
       setAssignedTo(initialAssignee);
       setCategory('Chore');
@@ -108,6 +117,34 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   const handleStepText = (id, text) =>
     setChecklist((p) => p.map((i) => (i.id === id ? { ...i, text } : i)));
 
+  const handleImageFile = async (e) => {
+    const picked = e.target.files?.[0];
+    e.target.value = '';
+    if (!picked) return;
+    setError(null);
+    if (isCroppable(picked)) {
+      const typeProblem = validateImageType(picked);
+      if (typeProblem) { setError(typeProblem); return; }
+      setCropFile(picked);
+    } else {
+      await uploadQuestPicked(picked);
+    }
+  };
+
+  const uploadQuestPicked = async (picked) => {
+    setImageBusy(true);
+    try {
+      const { file, error: problem } = await prepareImageForUpload(picked, 'quest');
+      if (problem) { setError(problem); return; }
+      const res = await uploadQuestImage(file);
+      setImage(res.image);
+    } catch (err) {
+      setError(err.message || 'Image upload failed');
+    } finally {
+      setImageBusy(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setValidated(true);
@@ -132,6 +169,9 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       .filter((i) => i.text.trim() !== '')
       .map((i) => ({ ...i, text: i.text.trim() }));
 
+    // Only parents can attach images (the upload endpoint is parent-only).
+    const imageField = isParent ? { image } : {};
+
     setSubmitting(true);
     setError(null);
 
@@ -147,6 +187,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           dueDate: dueDate || null,
           createdBy: currentMember.id,
           checklist: cleanChecklist,
+          ...imageField,
         });
         notify?.('Quest updated!', 'success');
       } else if (frequency === 'once') {
@@ -159,6 +200,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           dueDate: dueDate || null,
           createdBy: currentMember.id,
           checklist: cleanChecklist,
+          ...imageField,
         });
         notify?.('New quest added!', 'success');
       } else {
@@ -176,6 +218,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           startDate: dueDate || null,
           active: true,
           perMember,
+          ...imageField,
         });
         notify?.('Repeating quest set up!', 'success');
       }
@@ -194,6 +237,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   };
 
   return (
+    <>
     <Modal show={show} onHide={onHide} size="lg" centered backdrop="static">
       <Modal.Header closeButton>
         <Modal.Title>{isEditing ? 'EDIT QUEST' : 'NEW QUEST'}</Modal.Title>
@@ -230,6 +274,31 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
               onChange={(e) => setDescription(e.target.value)}
             />
           </Form.Group>
+
+          {isParent && (
+            <Form.Group className="mb-3">
+              <Form.Label>Picture <small className="text-muted">(optional)</small></Form.Label>
+              <div className="d-flex align-items-center gap-3 flex-wrap">
+                {image && (
+                  <img src={uploadUrl('quests', image)} alt="Quest"
+                    style={{ maxHeight: 96, maxWidth: 160, borderRadius: 6, border: '1px solid #dee2e6' }} />
+                )}
+                <input ref={imageInputRef} type="file" accept={ACCEPTED_IMAGE_TYPES}
+                  onChange={handleImageFile} style={{ display: 'none' }} />
+                <Button type="button" variant="outline-secondary" size="sm" disabled={imageBusy}
+                  onClick={() => imageInputRef.current?.click()}>
+                  <FaImage className="me-1" />
+                  {imageBusy ? 'Uploading…' : image ? 'Replace picture' : 'Add picture'}
+                </Button>
+                {image && !imageBusy && (
+                  <Button type="button" variant="outline-danger" size="sm" onClick={() => setImage(null)}>
+                    <FaTimes className="me-1" />Remove
+                  </Button>
+                )}
+              </div>
+              <Form.Text className="text-muted">JPEG, PNG, GIF or WebP. You can crop it before saving.</Form.Text>
+            </Form.Group>
+          )}
 
           <Form.Group className="mb-3">
             <Form.Label>Reward (points)</Form.Label>
@@ -273,7 +342,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
                       id={`assign-${member.id}`}
                       label={
                         <span className="d-inline-flex align-items-center gap-2">
-                          <span style={{ fontSize: '1.1rem' }}>{member.avatar || '👤'}</span>
+                          <span style={{ fontSize: '1.1rem' }}><Avatar avatar={member.avatar} /></span>
                           <span>{member.name}</span>
                           <small style={{ color: 'var(--rt-ink-dim)', fontSize: '0.7rem' }}>
                             ({member.role})
@@ -404,5 +473,9 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
         </Modal.Footer>
       </Form>
     </Modal>
+    <ImageCropModal file={cropFile} aspect={16 / 9} outputWidth={1600} title="Adjust quest picture"
+      onCancel={() => setCropFile(null)}
+      onConfirm={(cropped) => { setCropFile(null); uploadQuestPicked(cropped); }} />
+    </>
   );
 }

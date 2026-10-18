@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import session from 'express-session';
 import SqliteStoreFactory from 'better-sqlite3-session-store';
 import Database from 'better-sqlite3';
-import { initializeDb } from './db.js';
+import { initializeDb, getDb } from './db.js';
 import authRouter from './routes/auth.js';
 import { requireUser, requireActiveMember } from './middleware/auth.js';
 import membersRouter from './routes/members.js';
@@ -16,6 +16,8 @@ import bulletinRouter from './routes/bulletin.js';
 import homeworkRouter from './routes/homework.js';
 import snacksRouter from './routes/snacks.js';
 import statsRouter from './routes/stats.js';
+import uploadsRouter from './routes/uploads.js';
+import { ensureUploadDirs, UPLOAD_KINDS, uploadDir, sweepOrphanQuestImages } from './lib/uploads.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,6 +27,17 @@ const PORT = process.env.PORT || 3001;
 const IS_PROD = process.env.NODE_ENV === 'production';
 
 initializeDb();
+ensureUploadDirs();
+{
+  const sweep = () => {
+    try {
+      const n = sweepOrphanQuestImages(getDb());
+      if (n) console.log(`Removed ${n} unused quest image(s)`);
+    } catch (err) { console.error('Quest image sweep failed:', err.message); }
+  };
+  sweep();
+  setInterval(sweep, 6 * 60 * 60 * 1000).unref();
+}
 
 const SqliteStore = SqliteStoreFactory(session);
 const sessionDbPath = path.resolve(__dirname, '..', 'data', 'famband.db');
@@ -63,8 +76,18 @@ app.use(session({
   }),
 }));
 
-// Serve uploaded photos
-app.use('/photos', express.static(path.resolve(__dirname, '..', 'public', 'photos')));
+// Serve uploaded images (photos, avatars, quests). nosniff + a type-checked,
+// server-named file set means a stored file can only ever render as an image.
+for (const [kind, { dir }] of Object.entries(UPLOAD_KINDS)) {
+  app.use(`/${dir}`, express.static(uploadDir(kind), {
+    index: false,
+    dotfiles: 'deny',
+    setHeaders: (res) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+    },
+  }));
+}
 
 if (IS_PROD) {
   app.use(express.static(path.resolve(__dirname, '..', 'dist')));
@@ -89,9 +112,10 @@ app.use('/api/bulletin', requireUser, bulletinRouter);
 app.use('/api/homework', requireUser, homeworkRouter);
 app.use('/api/snacks', requireUser, snacksRouter);
 app.use('/api/stats', requireUser, statsRouter);
+app.use('/api/uploads', requireUser, uploadsRouter);
 
 if (IS_PROD) {
-  app.get('*', (req, res) => {
+  app.get('/{*splat}', (req, res) => {
     res.sendFile(path.resolve(__dirname, '..', 'dist', 'index.html'));
   });
 }

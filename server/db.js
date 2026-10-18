@@ -234,6 +234,14 @@ export function initializeDb() {
     CREATE INDEX IF NOT EXISTS idx_ledger_family ON points_ledger(family_id);
   `);
 
+  // Lightweight additive migrations for databases created before a column existed.
+  const addColumnIfMissing = (table, column, ddl) => {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  };
+  addColumnIfMissing('chores', 'image', 'TEXT');
+  addColumnIfMissing('chore_templates', 'image', 'TEXT');
+
   // Seed achievement catalog (global, not per-family)
   const achievementCount = db.prepare('SELECT COUNT(*) as count FROM achievements').get();
   if (achievementCount.count === 0) {

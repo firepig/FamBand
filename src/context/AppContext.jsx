@@ -108,7 +108,7 @@ export function AppProvider({ children }) {
     ...data,
     user, family, currentMember, isParent,
     authReady, loading,
-    register, login, logout, selectMember, switchMember, refresh,
+    register, login, logout, selectMember, switchMember, refresh, refreshSession: loadSession,
     toasts, notify, dismissToast,
   }
 

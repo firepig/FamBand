@@ -28,3 +28,5 @@ data/
 
 # User-uploaded content
 public/photos/
+public/avatars/
+public/quests/

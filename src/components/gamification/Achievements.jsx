@@ -19,6 +19,7 @@ import {
 import AppContext from '../../context/AppContext';
 import { fetchStats, fetchPoints } from '../../api';
 import Confetti from '../common/Confetti';
+import Avatar from '../common/Avatar';
 
 const DEFAULT_ACHIEVEMENTS = [
   { id: 'ach-001', name: 'First Steps', description: 'Complete your first chore!', icon: '🌟', criteria: { type: 'chores_completed', threshold: 1 } },
@@ -310,7 +311,7 @@ export default function Achievements() {
                               }}
                               title={earner.memberName}
                             >
-                              {earner.memberAvatar} {earner.memberName}
+                              <Avatar avatar={earner.memberAvatar} /> {earner.memberName}
                             </span>
                           ))}
                         </div>

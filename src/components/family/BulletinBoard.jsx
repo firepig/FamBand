@@ -16,6 +16,7 @@ import {
 } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import { fetchBulletinPosts, createBulletinPost, deleteBulletinPost } from '../../api';
+import Avatar from '../common/Avatar';
 
 const STICKY_COLORS = ['#fff9c4', '#ffecb3', '#c8e6c9', '#bbdefb', '#f8bbd0'];
 
@@ -246,7 +247,7 @@ export default function BulletinBoard() {
 
                       {/* Author */}
                       <div className="d-flex align-items-center gap-2 mb-2">
-                        <span style={{ fontSize: '1.5rem' }}>{authorAvatar}</span>
+                        <span style={{ fontSize: '1.5rem' }}><Avatar avatar={authorAvatar} /></span>
                         <div>
                           <div className="fw-bold small" style={{ color: authorColor }}>
                             {authorName}
@@ -305,7 +306,7 @@ export default function BulletinBoard() {
 
             {currentMember && (
               <div className="d-flex align-items-center gap-2 mt-2">
-                <span style={{ fontSize: '1.2rem' }}>{currentMember.avatar || '👤'}</span>
+                <span style={{ fontSize: '1.2rem' }}><Avatar avatar={currentMember.avatar} /></span>
                 <small className="text-muted">
                   Posting as <strong>{currentMember.name}</strong>
                 </small>

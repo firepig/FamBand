@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { getDb } from '../db.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
+import { imageUpload, deleteUpload, avatarFilename, AVATAR_IMG_PREFIX } from '../lib/uploads.js';
 
 const router = Router();
 
@@ -107,6 +108,72 @@ router.patch('/:id/pin', requireActiveMember, async (req, res, next) => {
   }
 });
 
+const MEMBER_COLS =
+  'id, family_id, user_id, name, role, avatar, color, created_at, (pin_hash IS NOT NULL) as has_pin';
+
+// Parents may edit anyone in the family; everyone else only themselves.
+function loadEditableMember(req, res, next) {
+  const db = getDb();
+  const target = db.prepare('SELECT * FROM family_members WHERE id = ? AND family_id = ?')
+    .get(req.params.id, req.familyId);
+  if (!target) return res.status(404).json({ error: 'Member not found' });
+  const isParent = req.currentMember.role === 'parent';
+  if (!isParent && req.currentMember.id !== target.id) {
+    return res.status(403).json({ error: 'Not allowed' });
+  }
+  req.targetMember = target;
+  next();
+}
+
+const profileSchema = z.object({
+  name: z.string().trim().min(1).max(80).optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Color must be a hex value like #12ab34').optional(),
+  // Emoji only; uploaded images go through POST /:id/avatar.
+  avatar: z.string().trim().min(1).max(16)
+    .refine((v) => !v.startsWith(AVATAR_IMG_PREFIX), 'Use the upload endpoint for images').optional(),
+});
+
+// PATCH /:id — edit profile (name, color, emoji avatar).
+// Parents can edit anyone; a member can edit their own color/avatar but not their name.
+router.patch('/:id', requireActiveMember, loadEditableMember, (req, res, next) => {
+  try {
+    const input = profileSchema.parse(req.body || {});
+    const isParent = req.currentMember.role === 'parent';
+    if (input.name !== undefined && !isParent) {
+      return res.status(403).json({ error: 'Only a parent can rename a member' });
+    }
+    const sets = [];
+    const vals = [];
+    for (const col of ['name', 'color', 'avatar']) {
+      if (input[col] !== undefined) { sets.push(`${col} = ?`); vals.push(input[col]); }
+    }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+
+    const db = getDb();
+    db.prepare(`UPDATE family_members SET ${sets.join(', ')} WHERE id = ?`).run(...vals, req.targetMember.id);
+    if (input.avatar !== undefined) deleteUpload('avatar', avatarFilename(req.targetMember.avatar));
+
+    res.json(db.prepare(`SELECT ${MEMBER_COLS} FROM family_members WHERE id = ?`).get(req.targetMember.id));
+  } catch (err) {
+    if (err instanceof z.ZodError) return res.status(400).json({ error: err.issues[0]?.message || 'Invalid input' });
+    next(err);
+  }
+});
+
+// POST /:id/avatar — upload an avatar image (multipart field "avatar").
+router.post('/:id/avatar', requireActiveMember, loadEditableMember, imageUpload('avatar', 'avatar'), (req, res, next) => {
+  try {
+    const db = getDb();
+    db.prepare('UPDATE family_members SET avatar = ? WHERE id = ?')
+      .run(AVATAR_IMG_PREFIX + req.upload.filename, req.targetMember.id);
+    deleteUpload('avatar', avatarFilename(req.targetMember.avatar));
+    res.json(db.prepare(`SELECT ${MEMBER_COLS} FROM family_members WHERE id = ?`).get(req.targetMember.id));
+  } catch (err) {
+    deleteUpload('avatar', req.upload?.filename);
+    next(err);
+  }
+});
+
 // DELETE /:id — remove a member (parent only). Cannot remove the member linked to the current user.
 router.delete('/:id', requireActiveMember, requireParent, (req, res) => {
   try {
@@ -118,6 +185,7 @@ router.delete('/:id', requireActiveMember, requireParent, (req, res) => {
       return res.status(400).json({ error: 'Cannot remove the account owner member' });
     }
     db.prepare('DELETE FROM family_members WHERE id = ?').run(target.id);
+    deleteUpload('avatar', avatarFilename(target.avatar));
     res.json({ ok: true });
   } catch (err) {
     console.error('Error deleting member:', err);

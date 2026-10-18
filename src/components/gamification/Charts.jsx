@@ -7,6 +7,7 @@ import {
 } from 'recharts';
 import AppContext from '../../context/AppContext';
 import { fetchStats } from '../../api';
+import { avatarText } from '../../utils/images';
 
 // Retro chart palette
 const PALETTE = ['#ffcc00', '#4cc9f0', '#5af78e', '#ff7b29', '#b388ff', '#ff3864'];
@@ -293,7 +294,7 @@ export default function Charts() {
                   color="var(--rt-accent-2)"
                   label="Hot Streak (7d)"
                   value={topStreaker ? topStreaker.count : '—'}
-                  sub={topStreaker ? `${topStreaker.member.avatar || ''} ${topStreaker.member.name}` : 'No one yet'}
+                  sub={topStreaker ? `${avatarText(topStreaker.member.avatar)} ${topStreaker.member.name}` : 'No one yet'}
                 />
               </Col>
               <Col xs={6}>
@@ -302,7 +303,7 @@ export default function Charts() {
                   color="var(--rt-danger)"
                   label="Most Failed"
                   value={mostFailed ? mostFailed.count : '—'}
-                  sub={mostFailed ? `${mostFailed.member.avatar || ''} ${mostFailed.member.name}` : 'No one yet'}
+                  sub={mostFailed ? `${avatarText(mostFailed.member.avatar)} ${mostFailed.member.name}` : 'No one yet'}
                 />
               </Col>
               <Col xs={6}>

@@ -3,6 +3,7 @@ import { Spinner } from 'react-bootstrap';
 import { FaStar, FaCrown } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import { fetchPoints } from '../../api';
+import Avatar from '../common/Avatar';
 
 const LEVEL_BASE = 100;
 const getLevel = (p) => Math.floor(p / LEVEL_BASE) + 1;
@@ -114,7 +115,7 @@ export default function PointsBar() {
             onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--rt-panel)'; }}
           >
             <span style={{ fontSize: '1rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              {m.avatar || '👤'}
+              <Avatar avatar={m.avatar} />
               <span style={{ fontSize: '0.6rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 {m.name}
                 {isParent && <FaCrown size={9} style={{ color: 'var(--rt-accent)' }} />}

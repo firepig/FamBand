@@ -2,9 +2,9 @@ import { useContext, useEffect, useState } from 'react'
 import { Container, Card, Row, Col, Button, Modal, Form, Alert, Badge } from 'react-bootstrap'
 import AppContext from '../../context/AppContext'
 import { createMember, deleteMember, updateMemberPin, fetchMembers } from '../../api'
-
-const AVATARS = ['👤', '🧑', '👩', '👨', '🧒', '👦', '👧', '👶', '🧔', '👩‍🦰', '🦸', '🦸‍♀️', '🧙', '🧚']
-const COLORS = ['#0d6efd', '#d63384', '#198754', '#fd7e14', '#6f42c1', '#dc3545', '#20c997', '#ffc107']
+import Avatar from '../common/Avatar';
+import MemberEditor from './MemberEditor';
+import { AVATARS, COLORS } from '../../utils/memberOptions';
 
 export default function MemberManager() {
   const { user, currentMember, notify } = useContext(AppContext)
@@ -12,6 +12,7 @@ export default function MemberManager() {
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [pinTarget, setPinTarget] = useState(null)
+  const [editTarget, setEditTarget] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [error, setError] = useState('')
 
@@ -59,7 +60,7 @@ export default function MemberManager() {
               <Card>
                 <Card.Body>
                   <div className="d-flex align-items-center gap-3">
-                    <div style={{ fontSize: '2.5rem' }}>{m.avatar || '👤'}</div>
+                    <div style={{ fontSize: '2.5rem' }}><Avatar avatar={m.avatar} /></div>
                     <div className="flex-grow-1">
                       <div className="fw-bold">{m.name}</div>
                       <div className="small">
@@ -70,6 +71,9 @@ export default function MemberManager() {
                     </div>
                   </div>
                   <div className="d-flex gap-2 mt-3">
+                    <Button size="sm" variant="outline-secondary" onClick={() => setEditTarget(m)}>
+                      Edit
+                    </Button>
                     <Button size="sm" variant="outline-primary" onClick={() => setPinTarget(m)}>
                       Reset PIN
                     </Button>
@@ -91,6 +95,15 @@ export default function MemberManager() {
       </Row>
 
       <AddMemberModal show={showAdd} onHide={() => setShowAdd(false)} onCreated={() => { setShowAdd(false); load() }} />
+      <Modal show={!!editTarget} onHide={() => setEditTarget(null)} centered>
+        <Modal.Header closeButton><Modal.Title>Edit {editTarget?.name}</Modal.Title></Modal.Header>
+        <Modal.Body>
+          {editTarget && (
+            <MemberEditor key={editTarget.id} member={editTarget} canRename
+              onSaved={() => { setEditTarget(null); load() }} />
+          )}
+        </Modal.Body>
+      </Modal>
       <ResetPinModal target={pinTarget} onHide={() => setPinTarget(null)} onDone={() => { setPinTarget(null); load() }} />
 
       <Modal show={!!deleteTarget} onHide={() => setDeleteTarget(null)} centered>
