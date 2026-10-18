@@ -2,12 +2,13 @@ import { useState, useContext, useMemo, useCallback, useEffect } from 'react';
 import {
   DndContext,
   closestCenter,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
 import { Row, Col, Button, Spinner, Form, InputGroup } from 'react-bootstrap';
-import { FaPlus, FaUser, FaTag, FaCrown, FaGamepad } from 'react-icons/fa';
+import { FaPlus, FaUser, FaTag, FaCrown, FaGamepad, FaHandPaper } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import { updateChore } from '../../api';
 import Column from './Column';
@@ -42,8 +43,11 @@ export default function KanbanBoard() {
     }
   }, [isParent, currentMember?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Mouse drags after moving a few pixels. On touch screens a drag only starts after a
+  // short press-and-hold, so a normal swipe still scrolls the page.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } })
   );
 
   const children = useMemo(() => members.filter((m) => m.role === 'child'), [members]);
@@ -51,14 +55,25 @@ export default function KanbanBoard() {
   const filteredChores = useMemo(() => {
     // Hide failed (auto-expired recurring) from the active board.
     let result = (chores || []).filter((c) => c.status !== 'failed');
-    if (filterMember !== 'all') {
-      result = result.filter((chore) => getAssigneeIds(chore).includes(filterMember));
+    if (filterMember === 'grabs') {
+      result = result.filter((chore) => getAssigneeIds(chore).length === 0);
+    } else if (filterMember !== 'all') {
+      // A child's board is their own quests plus anything up for grabs that is still open.
+      result = result.filter((chore) => {
+        const ids = getAssigneeIds(chore);
+        return ids.includes(filterMember) || (!isParent && ids.length === 0 && chore.status !== 'done');
+      });
     }
     if (filterCategory !== 'All') {
       result = result.filter((chore) => chore.category === filterCategory);
     }
     return result;
-  }, [chores, filterMember, filterCategory]);
+  }, [chores, filterMember, filterCategory, isParent]);
+
+  const grabsCount = useMemo(
+    () => (chores || []).filter((c) => c.status !== 'failed' && c.status !== 'done' && getAssigneeIds(c).length === 0).length,
+    [chores]
+  );
 
   const columnChores = useMemo(() => {
     const map = {};
@@ -80,14 +95,16 @@ export default function KanbanBoard() {
       if (newStatus === activeChore.status) return;
       if (!COLUMNS.some((c) => c.status === newStatus)) return;
       try {
+        const wasUnclaimed = getAssigneeIds(activeChore).length === 0;
         await updateChore(activeChore.id, { status: newStatus });
         if (newStatus === 'done') notify?.('Quest complete! +XP', 'success');
+        else if (wasUnclaimed && !isParent && newStatus === 'in_progress') notify?.('You took this quest!', 'success');
         refresh();
       } catch (err) {
         notify?.(err.message || 'Could not move quest', 'error');
       }
     },
-    [chores, refresh, notify]
+    [chores, refresh, notify, isParent]
   );
 
   if (loading) {
@@ -112,6 +129,14 @@ export default function KanbanBoard() {
       >
         All
       </Button>
+      <Button
+        size="sm"
+        variant={filterMember === 'grabs' ? 'warning' : 'secondary'}
+        onClick={() => setFilterMember('grabs')}
+        title="Quests nobody has taken yet"
+      >
+        <FaHandPaper className="me-1" />Up for grabs{grabsCount > 0 ? ` (${grabsCount})` : ''}
+      </Button>
       {children.map((c) => (
         <Button
           key={c.id}
@@ -130,6 +155,11 @@ export default function KanbanBoard() {
       <span className="rt-view-badge" style={{ borderColor: 'var(--rt-primary)', color: 'var(--rt-primary)' }}>
         <FaGamepad /> {currentMember.name?.toUpperCase()}'S BOARD
       </span>
+      {grabsCount > 0 && (
+        <span className="rt-view-badge" style={{ borderColor: 'var(--rt-accent)', color: 'var(--rt-accent)' }}>
+          <FaHandPaper /> {grabsCount} UP FOR GRABS
+        </span>
+      )}
     </div>
   ) : null;
 
@@ -176,8 +206,9 @@ export default function KanbanBoard() {
         show={showForm}
         onHide={() => setShowForm(false)}
         editChore={null}
+        defaultUpForGrabs={isParent && filterMember === 'grabs'}
         defaultAssignee={
-          isParent && filterMember !== 'all' ? filterMember
+          isParent && filterMember !== 'all' && filterMember !== 'grabs' ? filterMember
           : !isParent ? currentMember?.id
           : undefined
         }

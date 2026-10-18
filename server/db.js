@@ -281,6 +281,11 @@ export function initializeDb() {
   // Rotating assignments: players take turns on a repeating quest.
   addColumnIfMissing('chore_template_assignments', 'position', 'INTEGER');
   db.exec('UPDATE chore_template_assignments SET position = rowid WHERE position IS NULL');
+  // Bounty quests: nobody is assigned, any player can take one. `bounty` marks a quest that
+  // started life up for grabs (so a claimer may give it back); `up_for_grabs` makes a repeating
+  // series produce one unassigned card a day.
+  addColumnIfMissing('chores', 'bounty', 'INTEGER DEFAULT 0');
+  addColumnIfMissing('chore_templates', 'up_for_grabs', 'INTEGER DEFAULT 0');
   addColumnIfMissing('chore_templates', 'rotation_enabled', 'INTEGER DEFAULT 0');
   addColumnIfMissing('chore_templates', 'rotation_every_weeks', 'INTEGER DEFAULT 1');
   addColumnIfMissing('chore_templates', 'rotation_start_dow', 'INTEGER DEFAULT 0');

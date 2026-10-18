@@ -71,8 +71,8 @@ export function materializeChores(db, familyId) {
     const insertChore = db.prepare(
       `INSERT INTO chores
         (id, family_id, title, description, points, status, created_by, due_date, category,
-         template_id, occurrence_date, instance_member_id, image)
-       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?)`
+         template_id, occurrence_date, instance_member_id, image, bounty)
+       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertAssign = db.prepare(
       'INSERT OR IGNORE INTO chore_assignments (chore_id, member_id) VALUES (?, ?)'
@@ -87,7 +87,7 @@ export function materializeChores(db, familyId) {
         insertChore.run(
           choreId, familyId, tpl.title, tpl.description || '', tpl.points || 10,
           tpl.created_by, todayKey, tpl.category || 'Chore',
-          tpl.id, todayKey, instanceMemberId, tpl.image || null,
+          tpl.id, todayKey, instanceMemberId, tpl.image || null, tpl.up_for_grabs ? 1 : 0,
         );
       } catch (err) {
         // Unique index conflict (already exists) — skip
@@ -108,6 +108,16 @@ export function materializeChores(db, familyId) {
       const assignments = db.prepare(
         'SELECT member_id FROM chore_template_assignments WHERE template_id = ?'
       ).all(tpl.id).map((r) => r.member_id);
+
+      if (tpl.up_for_grabs) {
+        // Bounty series: one unassigned card a day that any player can take.
+        const exists = db.prepare(
+          'SELECT 1 FROM chores WHERE template_id = ? AND occurrence_date = ? LIMIT 1'
+        ).get(tpl.id, todayKey);
+        if (exists) continue;
+        if (createInstance(tpl, [], null)) inserted += 1;
+        continue;
+      }
 
       if (tpl.rotation_enabled) {
         // Players take turns: one card per day, for whoever is on duty today. If the series
