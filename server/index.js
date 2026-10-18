@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import session from 'express-session';
 import SqliteStoreFactory from 'better-sqlite3-session-store';
 import Database from 'better-sqlite3';
-import { initializeDb } from './db.js';
+import { initializeDb, getDb } from './db.js';
 import authRouter from './routes/auth.js';
 import { requireUser, requireActiveMember } from './middleware/auth.js';
 import membersRouter from './routes/members.js';
@@ -17,7 +17,7 @@ import homeworkRouter from './routes/homework.js';
 import snacksRouter from './routes/snacks.js';
 import statsRouter from './routes/stats.js';
 import uploadsRouter from './routes/uploads.js';
-import { ensureUploadDirs, UPLOAD_KINDS, uploadDir } from './lib/uploads.js';
+import { ensureUploadDirs, UPLOAD_KINDS, uploadDir, sweepOrphanQuestImages } from './lib/uploads.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +28,16 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 
 initializeDb();
 ensureUploadDirs();
+{
+  const sweep = () => {
+    try {
+      const n = sweepOrphanQuestImages(getDb());
+      if (n) console.log(`Removed ${n} unused quest image(s)`);
+    } catch (err) { console.error('Quest image sweep failed:', err.message); }
+  };
+  sweep();
+  setInterval(sweep, 6 * 60 * 60 * 1000).unref();
+}
 
 const SqliteStore = SqliteStoreFactory(session);
 const sessionDbPath = path.resolve(__dirname, '..', 'data', 'famband.db');

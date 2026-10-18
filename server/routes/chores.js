@@ -61,7 +61,7 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
   try {
     const { title, description, points, assignedTo, dueDate, category, checklist, image } = req.body;
     if (!title) return res.status(400).json({ error: 'Title is required' });
-    if (image != null && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
+    if (image && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
 
     const db = getDb();
     const choreId = uuidv4();
@@ -120,7 +120,7 @@ router.patch('/:id', requireActiveMember, (req, res) => {
       return res.status(403).json({ error: 'Parent access required for these fields' });
     }
 
-    if (image != null && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
+    if (image && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
 
     const statusChangingToDone = status === 'done' && chore.status !== 'done';
 
@@ -293,8 +293,8 @@ router.post('/:id/duplicate', requireActiveMember, requireParent, (req, res) => 
     const newId = uuidv4();
 
     const insertChore = db.prepare(
-      `INSERT INTO chores (id, family_id, title, description, points, status, created_by, due_date, category)
-       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?)`
+      `INSERT INTO chores (id, family_id, title, description, points, status, created_by, due_date, category, image)
+       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?)`
     );
     const insertAssign = db.prepare('INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)');
     const insertStep = db.prepare('INSERT INTO checklist_items (id, chore_id, text) VALUES (?, ?, ?)');
@@ -302,7 +302,7 @@ router.post('/:id/duplicate', requireActiveMember, requireParent, (req, res) => 
     db.transaction(() => {
       insertChore.run(
         newId, req.familyId, src.title, src.description || '', src.points,
-        req.currentMember.id, dueDate ?? src.due_date, src.category || 'Chore'
+        req.currentMember.id, dueDate ?? src.due_date, src.category || 'Chore', src.image || null
       );
       const assigns = db.prepare('SELECT member_id FROM chore_assignments WHERE chore_id = ?').all(src.id);
       for (const a of assigns) insertAssign.run(newId, a.member_id);
@@ -321,10 +321,11 @@ router.post('/:id/duplicate', requireActiveMember, requireParent, (req, res) => 
 router.post('/:id/reject', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const chore = db.prepare('SELECT id FROM chores WHERE id = ? AND family_id = ?')
+    const chore = db.prepare('SELECT id, photo_proof FROM chores WHERE id = ? AND family_id = ?')
       .get(req.params.id, req.familyId);
     if (!chore) return res.status(404).json({ error: 'Chore not found' });
     db.prepare('UPDATE chores SET photo_proof = NULL WHERE id = ?').run(req.params.id);
+    deleteUpload('photo', chore.photo_proof);
     res.json(getChoreWithRelations(db, req.params.id, req.familyId));
   } catch (err) {
     console.error('Error rejecting photo:', err);

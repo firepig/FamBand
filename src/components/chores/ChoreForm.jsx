@@ -11,7 +11,7 @@ import {
 import { FaPlus, FaTimes, FaImage } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import { createChore, updateChore, createTemplate, uploadQuestImage } from '../../api';
-import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload, uploadUrl, validateImageFile, isCroppable } from '../../utils/images';
+import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload, uploadUrl, validateImageType, isCroppable } from '../../utils/images';
 import ImageCropModal from '../common/ImageCropModal';
 import Avatar from '../common/Avatar';
 
@@ -123,7 +123,8 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     if (!picked) return;
     setError(null);
     if (isCroppable(picked)) {
-      if (validateImageFile({ type: picked.type, size: 0 }, 1)) { setError('Use a JPEG, PNG, GIF or WebP image'); return; }
+      const typeProblem = validateImageType(picked);
+      if (typeProblem) { setError(typeProblem); return; }
       setCropFile(picked);
     } else {
       await uploadQuestPicked(picked);

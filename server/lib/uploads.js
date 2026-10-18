@@ -107,6 +107,24 @@ export function releaseQuestImage(db, name) {
   if (!inUse) deleteUpload('quest', name);
 }
 
+// Quest images are uploaded before the quest is saved, so a replaced, removed or
+// abandoned picture is never attached to anything. Delete unreferenced files once
+// they are old enough that they can't belong to a form that is still open.
+export function sweepOrphanQuestImages(db, minAgeMs = 24 * 60 * 60 * 1000) {
+  let removed = 0;
+  const dir = uploadDir('quest');
+  for (const name of fs.readdirSync(dir)) {
+    if (!isStoredName(name)) continue;
+    try {
+      if (Date.now() - fs.statSync(path.join(dir, name)).mtimeMs < minAgeMs) continue;
+    } catch { continue; }
+    const before = fs.existsSync(path.join(dir, name));
+    releaseQuestImage(db, name);
+    if (before && !fs.existsSync(path.join(dir, name))) removed++;
+  }
+  return removed;
+}
+
 export const AVATAR_IMG_PREFIX = 'img:';
 
 export function avatarFilename(avatar) {

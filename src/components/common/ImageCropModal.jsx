@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Modal, Button, Form, Spinner } from 'react-bootstrap'
 import Cropper from 'react-easy-crop'
 import { cropImageFile } from '../../utils/images'
@@ -6,15 +6,22 @@ import { cropImageFile } from '../../utils/images'
 // Lets the user frame a picked image before upload: drag to move, slider or
 // pinch/scroll to zoom. Calls onConfirm(croppedFile) or onCancel().
 export default function ImageCropModal({ file, aspect = 1, round = false, outputWidth = 1600, title = 'Adjust picture', onConfirm, onCancel }) {
-  const url = useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
+  const [url, setUrl] = useState(null)
   const [crop, setCrop] = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
   const [area, setArea] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  useEffect(() => () => { if (url) URL.revokeObjectURL(url) }, [url])
-  useEffect(() => { setCrop({ x: 0, y: 0 }); setZoom(1); setArea(null); setError('') }, [file])
+  // Create and revoke the object URL in the same effect, so StrictMode's
+  // mount/cleanup/mount cycle can't leave us holding a revoked URL.
+  useEffect(() => {
+    setCrop({ x: 0, y: 0 }); setZoom(1); setArea(null); setError('')
+    if (!file) { setUrl(null); return undefined }
+    const u = URL.createObjectURL(file)
+    setUrl(u)
+    return () => URL.revokeObjectURL(u)
+  }, [file])
 
   const onComplete = useCallback((_, pixels) => setArea(pixels), [])
 

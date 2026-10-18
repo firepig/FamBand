@@ -4,7 +4,7 @@ import { FaUpload } from 'react-icons/fa'
 import AppContext from '../../context/AppContext'
 import { updateMember, uploadAvatar } from '../../api'
 import { AVATARS, COLORS } from '../../utils/memberOptions'
-import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload, isImageAvatar, validateImageFile, isCroppable } from '../../utils/images'
+import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload, isImageAvatar, validateImageType, isCroppable } from '../../utils/images'
 import Avatar from '../common/Avatar'
 import ImageCropModal from '../common/ImageCropModal'
 
@@ -33,7 +33,8 @@ export default function MemberEditor({ member, canRename, onSaved }) {
     setError('')
     if (isCroppable(picked)) {
       // Only check the type here; size is handled after cropping shrinks it.
-      if (validateImageFile({ type: picked.type, size: 0 }, 1)) { setError('Use a JPEG, PNG, GIF or WebP image'); return }
+      const typeProblem = validateImageType(picked)
+      if (typeProblem) { setError(typeProblem); return }
       setCropFile(picked)
     } else {
       await uploadPicked(picked)
@@ -62,10 +63,9 @@ export default function MemberEditor({ member, canRename, onSaved }) {
     const patch = {}
     if (canRename && name.trim() !== member.name) patch.name = name.trim()
     if (color !== member.color) patch.color = color
-    // An uploaded image is saved at upload time; only send an emoji change.
+    // An uploaded image is saved at upload time; only send an emoji choice
+    // (this also covers switching from an uploaded image back to an emoji).
     if (!isImageAvatar(avatar) && avatar !== member.avatar) patch.avatar = avatar
-    // Switching from an uploaded image back to an emoji.
-    if (isImageAvatar(member.avatar) && !isImageAvatar(avatar)) patch.avatar = avatar
     if (Object.keys(patch).length === 0) { notify?.('No changes to save', 'info'); return }
     setBusy(true)
     try {

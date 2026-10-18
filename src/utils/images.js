@@ -7,10 +7,17 @@ export const MAX_MB = { avatar: 2, quest: 5, photo: 5 }
 // Longest side, in pixels, that we resize down to before uploading.
 export const MAX_DIM = { avatar: 512, quest: 1600, photo: 1600 }
 
-// Returns an error string, or null when the file looks acceptable.
-export function validateImageFile(file, maxMB) {
+// Type-only check, for when the size will be handled later (e.g. after cropping).
+export function validateImageType(file) {
   if (!file) return 'No file selected'
   if (!ALLOWED.has(file.type)) return 'Use a JPEG, PNG, GIF or WebP image'
+  return null
+}
+
+// Returns an error string, or null when the file looks acceptable.
+export function validateImageFile(file, maxMB) {
+  const typeProblem = validateImageType(file)
+  if (typeProblem) return typeProblem
   if (file.size > maxMB * 1024 * 1024) return `Image is too large (max ${maxMB} MB)`
   return null
 }
@@ -68,8 +75,7 @@ export async function canvasToFile(canvas, sourceType, sourceName) {
 // Shrinks an image in the browser when it is larger than `kind` allows, either
 // in pixels or bytes. Small images are returned untouched (no recompression).
 // Animated GIFs are never touched, since a canvas would flatten them.
-async function downscale(file, maxDim) {
-  const bitmap = await loadBitmap(file)
+async function downscale(file, bitmap, maxDim) {
   const w = bitmap.width
   const h = bitmap.height
   const scale = Math.min(1, maxDim / Math.max(w, h))
@@ -82,7 +88,6 @@ async function downscale(file, maxDim) {
     ctx.fillRect(0, 0, canvas.width, canvas.height)
   }
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-  bitmap.close?.()
 
   return canvasToFile(canvas, file.type, file.name)
 }
@@ -96,17 +101,19 @@ export async function prepareImageForUpload(file, kind) {
 
   let out = file
   if (file.type !== 'image/gif') {
+    let bitmap
     try {
-      const bitmap = await loadBitmap(file)
+      bitmap = await loadBitmap(file) // decoded once, reused for the resize
       const tooBig = Math.max(bitmap.width, bitmap.height) > maxDim
-      bitmap.close?.()
       if (tooBig || file.size > maxMB * 1024 * 1024) {
-        const resized = await downscale(file, maxDim)
+        const resized = await downscale(file, bitmap, maxDim)
         // Never make a small file bigger just because we re-encoded it.
         out = resized.size < file.size || tooBig ? resized : file
       }
     } catch (err) {
       return { error: err.message || 'Could not read that image' }
+    } finally {
+      bitmap?.close?.()
     }
   }
   const problem = validateImageFile(out, maxMB)

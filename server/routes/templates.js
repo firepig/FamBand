@@ -71,7 +71,7 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
     } = req.body || {};
 
     if (!title) return res.status(400).json({ error: 'title is required' });
-    if (image != null && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
+    if (image && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
     if (!VALID_FREQ.has(frequency)) return res.status(400).json({ error: `Invalid frequency: ${frequency}` });
 
     const db = getDb();
@@ -89,7 +89,7 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
     db.transaction(() => {
       insertTpl.run(
         id, req.familyId, title, description, points, category, req.currentMember.id,
-        frequency, days, interval, startDate, endDate, active ? 1 : 0, perMember ? 1 : 0, image
+        frequency, days, interval, startDate, endDate, active ? 1 : 0, perMember ? 1 : 0, image || null
       );
       (assignedTo || []).forEach((mid) => {
         if (memberBelongsToFamily(db, mid, req.familyId)) insertAssign.run(id, mid);
@@ -115,7 +115,7 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
 
     const { title, description, points, category, frequency, daysOfWeek,
       interval, startDate, endDate, active, assignedTo, checklist, perMember, image } = req.body || {};
-    if (image != null && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
+    if (image && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
 
     const setCols = [];
     const setVals = [];
