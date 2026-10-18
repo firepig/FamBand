@@ -91,6 +91,75 @@ router.post('/cash-outs/:id/paid', requireActiveMember, requireParent, (req, res
   }
 });
 
+// GET /transfers — gifts between members. Parents see the whole family's; everyone else only their own.
+router.get('/transfers', requireActiveMember, (req, res) => {
+  try {
+    const db = getDb();
+    const me = req.currentMember;
+    const mine = me.role === 'parent' ? '' : 'AND (t.from_member_id = ? OR t.to_member_id = ?)';
+    const args = me.role === 'parent' ? [req.familyId] : [req.familyId, me.id, me.id];
+    const rows = db.prepare(
+      `SELECT t.*, f.name AS from_name, f.avatar AS from_avatar, r.name AS to_name, r.avatar AS to_avatar
+         FROM point_transfers t
+         LEFT JOIN family_members f ON f.id = t.from_member_id
+         LEFT JOIN family_members r ON r.id = t.to_member_id
+        WHERE t.family_id = ? ${mine}
+        ORDER BY t.created_at DESC, t.rowid DESC LIMIT 100`
+    ).all(...args);
+    res.json(rows);
+  } catch (err) {
+    console.error('Error listing transfers:', err);
+    res.status(500).json({ error: 'Failed to load gifts' });
+  }
+});
+
+// POST /transfer — the active member gifts some of their own balance to another member. Instant.
+router.post('/transfer', requireActiveMember, (req, res) => {
+  try {
+    const { toMemberId } = req.body || {};
+    const amount = Number(req.body?.amount);
+    const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 100) : '';
+    if (!toMemberId) return res.status(400).json({ error: 'Choose who to send points to' });
+    if (!Number.isInteger(amount) || amount < 1 || amount > 100000) {
+      return res.status(400).json({ error: 'Enter a whole number of points (1 or more)' });
+    }
+    const db = getDb();
+    const from = req.currentMember;
+    if (toMemberId === from.id) return res.status(400).json({ error: "You can't send points to yourself" });
+    const to = db.prepare('SELECT id, name FROM family_members WHERE id = ? AND family_id = ?').get(toMemberId, req.familyId);
+    if (!to) return res.status(404).json({ error: 'Member not found' });
+
+    let balance;
+    const id = uuidv4();
+    db.transaction(() => {
+      balance = balanceOf(db, from.id);
+      if (balance < amount) {
+        const err = new Error('Not enough points');
+        err.insufficient = true;
+        throw err;
+      }
+      // Recorded as 'earned' for the receiver (not 'released') so family "points released" stats
+      // only count quest rewards.
+      db.prepare(
+        `INSERT INTO points_ledger (id, family_id, member_id, amount, type, description)
+         VALUES (?, ?, ?, ?, 'spent', ?)`
+      ).run(uuidv4(), req.familyId, from.id, amount, `Gift to ${to.name}`);
+      db.prepare(
+        `INSERT INTO points_ledger (id, family_id, member_id, amount, type, description)
+         VALUES (?, ?, ?, ?, 'earned', ?)`
+      ).run(uuidv4(), req.familyId, to.id, amount, `Gift from ${from.name}`);
+      db.prepare(
+        'INSERT INTO point_transfers (id, family_id, from_member_id, to_member_id, amount, note) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(id, req.familyId, from.id, to.id, amount, note || null);
+    })();
+    res.status(201).json({ success: true, id, amount, balance: balance - amount });
+  } catch (err) {
+    if (err.insufficient) return res.status(400).json({ error: 'Not enough points' });
+    console.error('Error transferring points:', err);
+    res.status(500).json({ error: 'Failed to send points' });
+  }
+});
+
 // GET /:memberId — balance, ledger, achievements
 router.get('/:memberId', (req, res) => {
   try {

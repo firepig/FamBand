@@ -176,6 +176,11 @@ export async function markCashOutPaid(id) {
   return apiFetch(`/api/points/cash-outs/${id}/paid`, { method: 'POST', body: JSON.stringify({}) })
 }
 
+export async function transferPoints(toMemberId, amount, note) {
+  return apiFetch('/api/points/transfer', { method: 'POST', body: JSON.stringify({ toMemberId, amount, note }) })
+}
+export async function fetchTransfers() { return apiFetch('/api/points/transfers') }
+
 // --- Bulletin ---
 export async function fetchBulletinPosts() { return apiFetch('/api/bulletin') }
 export async function createBulletinPost(data) {

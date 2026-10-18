@@ -182,6 +182,19 @@ export function initializeDb() {
       FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS point_transfers (
+      id TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      from_member_id TEXT,
+      to_member_id TEXT,
+      amount INTEGER NOT NULL CHECK(amount > 0),
+      note TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
+      FOREIGN KEY (from_member_id) REFERENCES family_members(id) ON DELETE SET NULL,
+      FOREIGN KEY (to_member_id) REFERENCES family_members(id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS bulletin_posts (
       id TEXT PRIMARY KEY,
       family_id TEXT NOT NULL,
