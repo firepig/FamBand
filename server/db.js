@@ -168,6 +168,20 @@ export function initializeDb() {
       FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS cash_outs (
+      id TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      member_id TEXT,
+      points INTEGER NOT NULL,
+      cents INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'owed' CHECK(status IN ('owed','paid')),
+      created_at TEXT DEFAULT (datetime('now')),
+      paid_at TEXT,
+      paid_by TEXT,
+      FOREIGN KEY (family_id) REFERENCES families(id) ON DELETE CASCADE,
+      FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS bulletin_posts (
       id TEXT PRIMARY KEY,
       family_id TEXT NOT NULL,

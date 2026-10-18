@@ -10,6 +10,7 @@ export default function Navbar() {
   const { members, currentMember, switchMember, logout, isParent, chores, stats, snacks } = useContext(AppContext);
   const location = useLocation();
   const [points, setPoints] = useState(null);
+  const [pointsTick, setPointsTick] = useState(0);
   const [pointsLoading, setPointsLoading] = useState(false);
 
   useEffect(() => {
@@ -23,7 +24,14 @@ export default function Navbar() {
       })
       .catch(() => { if (!cancelled) { setPoints(0); setPointsLoading(false); } });
     return () => { cancelled = true; };
-  }, [currentMember?.id, chores, stats, snacks]);
+  }, [currentMember?.id, chores, stats, snacks, pointsTick]);
+
+  // Pages that spend points (shop, cash out) announce it so the badge updates right away.
+  useEffect(() => {
+    const bump = () => setPointsTick((n) => n + 1);
+    window.addEventListener('points-changed', bump);
+    return () => window.removeEventListener('points-changed', bump);
+  }, []);
 
   const navLinks = [
     { label: 'BOARD', path: '/' },
