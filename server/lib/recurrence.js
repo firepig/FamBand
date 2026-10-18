@@ -11,6 +11,17 @@
  * touch UTC midnight ambiguity (timezone bug we already fixed elsewhere).
  */
 
+// Normalize a days-of-week input (array or CSV) into a clean "0,1,3" string.
+export function normalizeDays(input) {
+  if (input == null) return '';
+  if (Array.isArray(input)) {
+    return input.map((n) => Number(n))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6)
+      .join(',');
+  }
+  return String(input);
+}
+
 export function parseDateKey(str) {
   if (!str) return null;
   const s = String(str).split('T')[0];

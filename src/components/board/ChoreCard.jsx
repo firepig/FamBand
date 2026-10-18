@@ -74,6 +74,7 @@ export default function ChoreCard({ chore }) {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [togglingItem, setTogglingItem] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showDupe, setShowDupe] = useState(false);
 
   const {
     id, title, description, points, status, image,
@@ -148,11 +149,12 @@ export default function ChoreCard({ chore }) {
     }
   };
 
-  const handleDuplicate = async () => {
+  const handleDuplicate = async (repeat = false) => {
     if (!currentMember?.id) return;
+    setShowDupe(false);
     try {
-      await duplicateChore(id, { createdBy: currentMember.id });
-      notify?.('Quest duplicated!', 'success');
+      await duplicateChore(id, { createdBy: currentMember.id, repeat });
+      notify?.(repeat ? 'Repeating quest duplicated!' : 'Quest duplicated!', 'success');
       setShowModal(false);
       refresh();
     } catch (err) {
@@ -342,7 +344,7 @@ export default function ChoreCard({ chore }) {
               </Button>
             )}
             {isParent && (
-              <Button variant="outline-warning" size="sm" onClick={handleDuplicate} title="Make a copy">
+              <Button variant="outline-warning" size="sm" onClick={() => (isRecurring ? setShowDupe(true) : handleDuplicate(false))} title="Make a copy">
                 <FaCopy className="me-1" /> DUPE
               </Button>
             )}
@@ -360,6 +362,20 @@ export default function ChoreCard({ chore }) {
             )}
           </div>
           <Button variant="secondary" onClick={() => setShowModal(false)}>CLOSE</Button>
+        </Modal.Footer>
+      </Modal>
+
+      <Modal show={showDupe} onHide={() => setShowDupe(false)} centered>
+        <Modal.Header closeButton><Modal.Title>Duplicate repeating quest</Modal.Title></Modal.Header>
+        <Modal.Body>
+          <p className="mb-0">
+            <strong>{title}</strong> repeats on a schedule. Should the copy repeat too, or be a single quest?
+          </p>
+        </Modal.Body>
+        <Modal.Footer className="flex-wrap">
+          <Button variant="secondary" onClick={() => setShowDupe(false)}>Cancel</Button>
+          <Button variant="outline-warning" onClick={() => handleDuplicate(false)}>Just this once</Button>
+          <Button variant="warning" onClick={() => handleDuplicate(true)}>Repeat it too</Button>
         </Modal.Footer>
       </Modal>
 

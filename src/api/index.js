@@ -134,6 +134,10 @@ export async function rejectChore(choreId) {
 
 // --- Templates ---
 export async function fetchTemplates() { return apiFetch('/api/templates') }
+export async function fetchTemplate(id) { return apiFetch(`/api/templates/${id}`) }
+export async function makeChoreRepeating(choreId, data) {
+  return apiFetch(`/api/chores/${choreId}/make-repeating`, { method: 'POST', body: JSON.stringify(data) })
+}
 export async function createTemplate(data) {
   return apiFetch('/api/templates', { method: 'POST', body: JSON.stringify(data) })
 }
