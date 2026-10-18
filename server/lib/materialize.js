@@ -17,7 +17,8 @@ import { getOccurrences, toDateKey } from './recurrence.js';
  *
  * Returns { inserted, failed, cleaned } counts.
  */
-export function materializeChores(db) {
+export function materializeChores(db, familyId) {
+  if (!familyId) throw new Error('materializeChores: familyId is required');
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const todayKey = toDateKey(today);
@@ -31,17 +32,19 @@ export function materializeChores(db) {
     const failResult = db.prepare(
       `UPDATE chores
          SET status = 'failed'
-       WHERE template_id IS NOT NULL
+       WHERE family_id = ?
+         AND template_id IS NOT NULL
          AND occurrence_date IS NOT NULL
          AND occurrence_date < ?
          AND status IN ('todo', 'in_progress')`
-    ).run(todayKey);
+    ).run(familyId, todayKey);
     failed = failResult.changes;
 
     // 2) Clean up untouched future instances.
     const futureStale = db.prepare(
       `SELECT c.id FROM chores c
-        WHERE c.template_id IS NOT NULL
+        WHERE c.family_id = ?
+          AND c.template_id IS NOT NULL
           AND c.occurrence_date IS NOT NULL
           AND c.occurrence_date > ?
           AND c.status = 'todo'
@@ -50,7 +53,7 @@ export function materializeChores(db) {
             SELECT 1 FROM checklist_items ci
              WHERE ci.chore_id = c.id AND ci.completed = 1
           )`
-    ).all(todayKey);
+    ).all(familyId, todayKey);
     if (futureStale.length > 0) {
       const del = db.prepare('DELETE FROM chores WHERE id = ?');
       for (const r of futureStale) {
@@ -61,14 +64,14 @@ export function materializeChores(db) {
 
     // 3) Materialize today's occurrences
     const templates = db.prepare(
-      `SELECT * FROM chore_templates WHERE active = 1 AND frequency != 'once'`
-    ).all();
+      `SELECT * FROM chore_templates WHERE family_id = ? AND active = 1 AND frequency != 'once'`
+    ).all(familyId);
 
     const insertChore = db.prepare(
       `INSERT INTO chores
-        (id, title, description, points, status, created_by, due_date, category,
+        (id, family_id, title, description, points, status, created_by, due_date, category,
          template_id, occurrence_date, instance_member_id)
-       VALUES (?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?)`
     );
     const insertAssign = db.prepare(
       'INSERT OR IGNORE INTO chore_assignments (chore_id, member_id) VALUES (?, ?)'
@@ -81,7 +84,7 @@ export function materializeChores(db) {
       const choreId = uuidv4();
       try {
         insertChore.run(
-          choreId, tpl.title, tpl.description || '', tpl.points || 10,
+          choreId, familyId, tpl.title, tpl.description || '', tpl.points || 10,
           tpl.created_by, todayKey, tpl.category || 'Chore',
           tpl.id, todayKey, instanceMemberId,
         );

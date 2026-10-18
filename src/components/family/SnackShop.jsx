@@ -281,7 +281,7 @@ export default function SnackShop() {
     if (!currentMember) return;
     setBuying(snack.id);
     try {
-      const result = await redeemSnack(currentMember.id, snack.id);
+      const result = await redeemSnack(snack.id);
       setPoints(result.balance ?? points - snack.cost);
       setShowCoinAnim(true);
       setSuccessMsg(`Enjoy your ${snack.name}!`);

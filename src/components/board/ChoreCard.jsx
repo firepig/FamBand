@@ -128,7 +128,7 @@ export default function ChoreCard({ chore }) {
   const handleApprove = async () => {
     if (!currentMember?.id) return;
     try {
-      await approveChore(id, currentMember.id);
+      await approveChore(id);
       notify?.('Quest approved! Points released.', 'success');
       refresh();
     } catch (err) {

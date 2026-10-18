@@ -1,13 +1,14 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getDb } from '../db.js';
+import { requireActiveMember, requireParent } from '../middleware/auth.js';
 
 const router = Router();
 
 const VALID_FREQ = new Set(['once', 'daily', 'weekdays', 'weekly', 'custom']);
 
-function loadTemplate(db, id) {
-  const t = db.prepare('SELECT * FROM chore_templates WHERE id = ?').get(id);
+function loadTemplate(db, id, familyId) {
+  const t = db.prepare('SELECT * FROM chore_templates WHERE id = ? AND family_id = ?').get(id, familyId);
   if (!t) return null;
   const assignments = db.prepare(
     `SELECT fm.id, fm.name, fm.avatar, fm.color, fm.role
@@ -24,31 +25,32 @@ function loadTemplate(db, id) {
 function normalizeDays(input) {
   if (input == null) return '';
   if (Array.isArray(input)) {
-    return input
-      .map((n) => Number(n))
+    return input.map((n) => Number(n))
       .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6)
       .join(',');
   }
   return String(input);
 }
 
-// GET /api/templates
+function memberBelongsToFamily(db, memberId, familyId) {
+  return !!db.prepare('SELECT 1 FROM family_members WHERE id = ? AND family_id = ?').get(memberId, familyId);
+}
+
 router.get('/', (req, res) => {
   try {
     const db = getDb();
-    const rows = db.prepare('SELECT id FROM chore_templates ORDER BY created_at DESC').all();
-    res.json(rows.map((r) => loadTemplate(db, r.id)));
+    const rows = db.prepare('SELECT id FROM chore_templates WHERE family_id = ? ORDER BY created_at DESC').all(req.familyId);
+    res.json(rows.map((r) => loadTemplate(db, r.id, req.familyId)));
   } catch (err) {
     console.error('templates list', err);
     res.status(500).json({ error: 'Failed to list templates' });
   }
 });
 
-// GET /api/templates/:id
 router.get('/:id', (req, res) => {
   try {
     const db = getDb();
-    const t = loadTemplate(db, req.params.id);
+    const t = loadTemplate(db, req.params.id, req.familyId);
     if (!t) return res.status(404).json({ error: 'Template not found' });
     res.json(t);
   } catch (err) {
@@ -57,23 +59,18 @@ router.get('/:id', (req, res) => {
   }
 });
 
-// POST /api/templates
-router.post('/', (req, res) => {
+router.post('/', requireActiveMember, requireParent, (req, res) => {
   try {
     const {
-      title, description = '', points = 10, category = 'Chore', createdBy,
+      title, description = '', points = 10, category = 'Chore',
       frequency = 'daily', daysOfWeek, interval = 1,
       startDate = null, endDate = null,
       assignedTo = [], checklist = [], active = true,
       perMember = true,
     } = req.body || {};
 
-    if (!title || !createdBy) {
-      return res.status(400).json({ error: 'title and createdBy are required' });
-    }
-    if (!VALID_FREQ.has(frequency)) {
-      return res.status(400).json({ error: `Invalid frequency: ${frequency}` });
-    }
+    if (!title) return res.status(400).json({ error: 'title is required' });
+    if (!VALID_FREQ.has(frequency)) return res.status(400).json({ error: `Invalid frequency: ${frequency}` });
 
     const db = getDb();
     const id = uuidv4();
@@ -81,47 +78,41 @@ router.post('/', (req, res) => {
 
     const insertTpl = db.prepare(
       `INSERT INTO chore_templates
-        (id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
-    const insertAssign = db.prepare(
-      'INSERT INTO chore_template_assignments (template_id, member_id) VALUES (?, ?)'
-    );
-    const insertStep = db.prepare(
-      'INSERT INTO chore_template_checklist (id, template_id, text, order_index) VALUES (?, ?, ?, ?)'
-    );
+    const insertAssign = db.prepare('INSERT INTO chore_template_assignments (template_id, member_id) VALUES (?, ?)');
+    const insertStep = db.prepare('INSERT INTO chore_template_checklist (id, template_id, text, order_index) VALUES (?, ?, ?, ?)');
 
     db.transaction(() => {
       insertTpl.run(
-        id, title, description, points, category, createdBy,
-        frequency, days, interval, startDate, endDate, active ? 1 : 0,
-        perMember ? 1 : 0
+        id, req.familyId, title, description, points, category, req.currentMember.id,
+        frequency, days, interval, startDate, endDate, active ? 1 : 0, perMember ? 1 : 0
       );
-      (assignedTo || []).forEach((mid) => insertAssign.run(id, mid));
+      (assignedTo || []).forEach((mid) => {
+        if (memberBelongsToFamily(db, mid, req.familyId)) insertAssign.run(id, mid);
+      });
       (checklist || []).forEach((item, idx) => {
         if (item?.text) insertStep.run(uuidv4(), id, item.text, idx);
       });
     })();
 
-    res.status(201).json(loadTemplate(db, id));
+    res.status(201).json(loadTemplate(db, id, req.familyId));
   } catch (err) {
     console.error('templates create', err);
     res.status(500).json({ error: 'Failed to create template' });
   }
 });
 
-// PATCH /api/templates/:id
-router.patch('/:id', (req, res) => {
+router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const existing = db.prepare('SELECT id FROM chore_templates WHERE id = ?').get(req.params.id);
+    const existing = db.prepare('SELECT id FROM chore_templates WHERE id = ? AND family_id = ?')
+      .get(req.params.id, req.familyId);
     if (!existing) return res.status(404).json({ error: 'Template not found' });
 
-    const {
-      title, description, points, category, frequency, daysOfWeek,
-      interval, startDate, endDate, active, assignedTo, checklist,
-      perMember,
-    } = req.body || {};
+    const { title, description, points, category, frequency, daysOfWeek,
+      interval, startDate, endDate, active, assignedTo, checklist, perMember } = req.body || {};
 
     const setCols = [];
     const setVals = [];
@@ -150,7 +141,9 @@ router.patch('/:id', (req, res) => {
       if (Array.isArray(assignedTo)) {
         db.prepare('DELETE FROM chore_template_assignments WHERE template_id = ?').run(req.params.id);
         const ins = db.prepare('INSERT INTO chore_template_assignments (template_id, member_id) VALUES (?, ?)');
-        assignedTo.forEach((mid) => ins.run(req.params.id, mid));
+        assignedTo.forEach((mid) => {
+          if (memberBelongsToFamily(db, mid, req.familyId)) ins.run(req.params.id, mid);
+        });
       }
       if (Array.isArray(checklist)) {
         db.prepare('DELETE FROM chore_template_checklist WHERE template_id = ?').run(req.params.id);
@@ -161,18 +154,18 @@ router.patch('/:id', (req, res) => {
       }
     })();
 
-    res.json(loadTemplate(db, req.params.id));
+    res.json(loadTemplate(db, req.params.id, req.familyId));
   } catch (err) {
     console.error('templates patch', err);
     res.status(500).json({ error: 'Failed to update template' });
   }
 });
 
-// DELETE /api/templates/:id — also unlinks existing instances (template_id → NULL via FK)
-router.delete('/:id', (req, res) => {
+router.delete('/:id', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const t = db.prepare('SELECT id FROM chore_templates WHERE id = ?').get(req.params.id);
+    const t = db.prepare('SELECT id FROM chore_templates WHERE id = ? AND family_id = ?')
+      .get(req.params.id, req.familyId);
     if (!t) return res.status(404).json({ error: 'Template not found' });
     db.prepare('DELETE FROM chore_templates WHERE id = ?').run(req.params.id);
     res.json({ message: 'Template deleted' });

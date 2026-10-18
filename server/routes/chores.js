@@ -5,11 +5,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDb } from '../db.js';
 import { materializeChores } from '../lib/materialize.js';
+import { requireActiveMember, requireParent } from '../middleware/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Multer config: store in public/photos/, filename = UUID + ext
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadsDir = path.resolve(__dirname, '..', '..', 'public', 'photos');
@@ -24,37 +24,35 @@ const upload = multer({ storage });
 
 const router = Router();
 
-// Helper to fetch a chore with all relations
-function getChoreWithRelations(db, id) {
-  const chore = db.prepare('SELECT * FROM chores WHERE id = ?').get(id);
+function getChoreWithRelations(db, id, familyId) {
+  const chore = db.prepare('SELECT * FROM chores WHERE id = ? AND family_id = ?').get(id, familyId);
   if (!chore) return null;
-
   const assignments = db.prepare(
     `SELECT fm.id, fm.name, fm.avatar, fm.color, fm.role
      FROM family_members fm
      JOIN chore_assignments ca ON fm.id = ca.member_id
      WHERE ca.chore_id = ?`
   ).all(id);
-
   const checklist = db.prepare(
     'SELECT * FROM checklist_items WHERE chore_id = ? ORDER BY rowid ASC'
   ).all(id);
-
   return { ...chore, assignments, checklist };
 }
 
-// GET / — list all chores with optional status filter
+function assertFamilyMember(db, memberId, familyId) {
+  const m = db.prepare('SELECT id FROM family_members WHERE id = ? AND family_id = ?').get(memberId, familyId);
+  return !!m;
+}
+
+// GET / — list family's chores
 router.get('/', (req, res) => {
   try {
     const db = getDb();
-    // Lazily ensure recurring instances exist for the rolling window before reading.
-    try { materializeChores(db); } catch (mErr) { console.error('materialize error:', mErr); }
-    let chores;
-    if (req.query.status) {
-      chores = db.prepare('SELECT * FROM chores WHERE status = ? ORDER BY created_at DESC').all(req.query.status);
-    } else {
-      chores = db.prepare('SELECT * FROM chores ORDER BY created_at DESC').all();
-    }
+    try { materializeChores(db, req.familyId); } catch (mErr) { console.error('materialize error:', mErr); }
+    const chores = req.query.status
+      ? db.prepare('SELECT * FROM chores WHERE family_id = ? AND status = ? ORDER BY created_at DESC')
+          .all(req.familyId, req.query.status)
+      : db.prepare('SELECT * FROM chores WHERE family_id = ? ORDER BY created_at DESC').all(req.familyId);
 
     const result = chores.map((chore) => {
       const assignments = db.prepare(
@@ -63,14 +61,11 @@ router.get('/', (req, res) => {
          JOIN chore_assignments ca ON fm.id = ca.member_id
          WHERE ca.chore_id = ?`
       ).all(chore.id);
-
       const checklist = db.prepare(
         'SELECT * FROM checklist_items WHERE chore_id = ? ORDER BY rowid ASC'
       ).all(chore.id);
-
       return { ...chore, assignments, checklist };
     });
-
     res.json(result);
   } catch (err) {
     console.error('Error fetching chores:', err);
@@ -78,85 +73,72 @@ router.get('/', (req, res) => {
   }
 });
 
-// POST / — create chore
-router.post('/', (req, res) => {
+// POST / — create chore (parent only)
+router.post('/', requireActiveMember, requireParent, (req, res) => {
   try {
-    const { title, description, points, assignedTo, dueDate, category, checklist, createdBy } = req.body;
-
-    if (!title || !createdBy) {
-      return res.status(400).json({ error: 'Title and createdBy are required' });
-    }
+    const { title, description, points, assignedTo, dueDate, category, checklist } = req.body;
+    if (!title) return res.status(400).json({ error: 'Title is required' });
 
     const db = getDb();
     const choreId = uuidv4();
 
     const insertChore = db.prepare(
-      `INSERT INTO chores (id, title, description, points, created_by, due_date, category)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO chores (id, family_id, title, description, points, created_by, due_date, category)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
-
     const insertAssignment = db.prepare(
       'INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)'
     );
-
     const insertChecklist = db.prepare(
       'INSERT INTO checklist_items (id, chore_id, text) VALUES (?, ?, ?)'
     );
 
-    const transaction = db.transaction(() => {
+    db.transaction(() => {
       insertChore.run(
-        choreId,
-        title,
-        description || '',
-        points || 10,
-        createdBy,
-        dueDate || null,
-        category || 'general'
+        choreId, req.familyId, title, description || '', points || 10,
+        req.currentMember.id, dueDate || null, category || 'general'
       );
-
-      if (assignedTo && Array.isArray(assignedTo) && assignedTo.length > 0) {
+      if (Array.isArray(assignedTo)) {
         for (const memberId of assignedTo) {
-          insertAssignment.run(choreId, memberId);
+          if (assertFamilyMember(db, memberId, req.familyId)) insertAssignment.run(choreId, memberId);
         }
       }
-
-      if (checklist && Array.isArray(checklist) && checklist.length > 0) {
+      if (Array.isArray(checklist)) {
         for (const item of checklist) {
-          if (item.text) {
-            insertChecklist.run(uuidv4(), choreId, item.text);
-          }
+          if (item?.text) insertChecklist.run(uuidv4(), choreId, item.text);
         }
       }
-    });
+    })();
 
-    transaction();
-
-    const result = getChoreWithRelations(db, choreId);
-    res.status(201).json(result);
+    res.status(201).json(getChoreWithRelations(db, choreId, req.familyId));
   } catch (err) {
     console.error('Error creating chore:', err);
     res.status(500).json({ error: 'Failed to create chore' });
   }
 });
 
-// PATCH /:id — update chore fields
-router.patch('/:id', (req, res) => {
+// PATCH /:id — update chore
+// Kids may change status (e.g. mark in_progress/done); parents may change anything.
+router.patch('/:id', requireActiveMember, (req, res) => {
   try {
     const db = getDb();
-    const chore = db.prepare('SELECT * FROM chores WHERE id = ?').get(req.params.id);
-
-    if (!chore) {
-      return res.status(404).json({ error: 'Chore not found' });
-    }
+    const chore = db.prepare('SELECT * FROM chores WHERE id = ? AND family_id = ?')
+      .get(req.params.id, req.familyId);
+    if (!chore) return res.status(404).json({ error: 'Chore not found' });
 
     const { title, description, points, status, dueDate, category, assignedTo } = req.body;
+    const isParent = req.currentMember.role === 'parent';
+    const touchesParentOnly =
+      title !== undefined || description !== undefined || points !== undefined ||
+      dueDate !== undefined || category !== undefined || assignedTo !== undefined;
+    if (touchesParentOnly && !isParent) {
+      return res.status(403).json({ error: 'Parent access required for these fields' });
+    }
 
-    // Track if status is changing to 'done'
     const statusChangingToDone = status === 'done' && chore.status !== 'done';
 
     const updateFields = [];
     const updateValues = [];
-
     if (title !== undefined) { updateFields.push('title = ?'); updateValues.push(title); }
     if (description !== undefined) { updateFields.push('description = ?'); updateValues.push(description); }
     if (points !== undefined) { updateFields.push('points = ?'); updateValues.push(points); }
@@ -164,103 +146,69 @@ router.patch('/:id', (req, res) => {
     if (dueDate !== undefined) { updateFields.push('due_date = ?'); updateValues.push(dueDate); }
     if (category !== undefined) { updateFields.push('category = ?'); updateValues.push(category); }
 
-    const transaction = db.transaction(() => {
+    db.transaction(() => {
       if (updateFields.length > 0) {
         updateValues.push(req.params.id);
-        db.prepare(
-          `UPDATE chores SET ${updateFields.join(', ')} WHERE id = ?`
-        ).run(...updateValues);
+        db.prepare(`UPDATE chores SET ${updateFields.join(', ')} WHERE id = ?`).run(...updateValues);
       }
-
-      if (assignedTo && Array.isArray(assignedTo)) {
+      if (Array.isArray(assignedTo)) {
         db.prepare('DELETE FROM chore_assignments WHERE chore_id = ?').run(req.params.id);
-        const insertAssignment = db.prepare(
-          'INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)'
-        );
+        const ins = db.prepare('INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)');
         for (const memberId of assignedTo) {
-          insertAssignment.run(req.params.id, memberId);
+          if (assertFamilyMember(db, memberId, req.familyId)) ins.run(req.params.id, memberId);
         }
       }
-
-      // When chore status changes to 'done', insert escrow points for each assigned member
       if (statusChangingToDone) {
-        const updatedChore = db.prepare('SELECT * FROM chores WHERE id = ?').get(req.params.id);
-        const assignments = db.prepare(
-          'SELECT member_id FROM chore_assignments WHERE chore_id = ?'
-        ).all(req.params.id);
-
+        const updated = db.prepare('SELECT * FROM chores WHERE id = ?').get(req.params.id);
+        const assignments = db.prepare('SELECT member_id FROM chore_assignments WHERE chore_id = ?').all(req.params.id);
         const insertLedger = db.prepare(
-          `INSERT INTO points_ledger (id, member_id, amount, type, chore_id, description)
-           VALUES (?, ?, ?, 'escrow', ?, ?)`
+          `INSERT INTO points_ledger (id, family_id, member_id, amount, type, chore_id, description)
+           VALUES (?, ?, ?, ?, 'escrow', ?, ?)`
         );
-
-        for (const assignment of assignments) {
-          // Check if escrow already exists for this member+chore to avoid duplicates
+        for (const a of assignments) {
           const existing = db.prepare(
             "SELECT id FROM points_ledger WHERE member_id = ? AND chore_id = ? AND type = 'escrow'"
-          ).get(assignment.member_id, req.params.id);
-
+          ).get(a.member_id, req.params.id);
           if (!existing) {
-            insertLedger.run(
-              uuidv4(),
-              assignment.member_id,
-              updatedChore.points,
-              req.params.id,
-              `Escrow: ${updatedChore.title}`
-            );
+            insertLedger.run(uuidv4(), req.familyId, a.member_id, updated.points, req.params.id, `Escrow: ${updated.title}`);
           }
         }
       }
-    });
+    })();
 
-    transaction();
-
-    const result = getChoreWithRelations(db, req.params.id);
-    res.json(result);
+    res.json(getChoreWithRelations(db, req.params.id, req.familyId));
   } catch (err) {
     console.error('Error updating chore:', err);
     res.status(500).json({ error: 'Failed to update chore' });
   }
 });
 
-// DELETE /:id — delete chore
-router.delete('/:id', (req, res) => {
+// DELETE /:id — parent only
+router.delete('/:id', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const chore = db.prepare('SELECT * FROM chores WHERE id = ?').get(req.params.id);
-
-    if (!chore) {
-      return res.status(404).json({ error: 'Chore not found' });
-    }
-
+    const chore = db.prepare('SELECT id FROM chores WHERE id = ? AND family_id = ?')
+      .get(req.params.id, req.familyId);
+    if (!chore) return res.status(404).json({ error: 'Chore not found' });
     db.prepare('DELETE FROM chores WHERE id = ?').run(req.params.id);
-    res.json({ message: 'Chore deleted successfully' });
+    res.json({ message: 'Chore deleted' });
   } catch (err) {
     console.error('Error deleting chore:', err);
     res.status(500).json({ error: 'Failed to delete chore' });
   }
 });
 
-// POST /:id/checklist — add checklist item
-router.post('/:id/checklist', (req, res) => {
+// POST /:id/checklist — add item (parent only)
+router.post('/:id/checklist', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const chore = db.prepare('SELECT * FROM chores WHERE id = ?').get(req.params.id);
-
-    if (!chore) {
-      return res.status(404).json({ error: 'Chore not found' });
-    }
-
+    const chore = db.prepare('SELECT id FROM chores WHERE id = ? AND family_id = ?')
+      .get(req.params.id, req.familyId);
+    if (!chore) return res.status(404).json({ error: 'Chore not found' });
     const { text } = req.body;
-    if (!text) {
-      return res.status(400).json({ error: 'Text is required' });
-    }
-
+    if (!text) return res.status(400).json({ error: 'Text is required' });
     const itemId = uuidv4();
-    db.prepare(
-      'INSERT INTO checklist_items (id, chore_id, text) VALUES (?, ?, ?)'
-    ).run(itemId, req.params.id, text);
-
+    db.prepare('INSERT INTO checklist_items (id, chore_id, text) VALUES (?, ?, ?)').run(itemId, req.params.id, text);
     const item = db.prepare('SELECT * FROM checklist_items WHERE id = ?').get(itemId);
     res.status(201).json(item);
   } catch (err) {
@@ -269,47 +217,35 @@ router.post('/:id/checklist', (req, res) => {
   }
 });
 
-// PATCH /:id/checklist/:itemId — toggle checklist item
-router.patch('/:id/checklist/:itemId', (req, res) => {
+// PATCH /:id/checklist/:itemId — toggle (any family member)
+router.patch('/:id/checklist/:itemId', requireActiveMember, (req, res) => {
   try {
     const db = getDb();
+    const chore = db.prepare('SELECT id FROM chores WHERE id = ? AND family_id = ?')
+      .get(req.params.id, req.familyId);
+    if (!chore) return res.status(404).json({ error: 'Chore not found' });
     const item = db.prepare('SELECT * FROM checklist_items WHERE id = ? AND chore_id = ?')
       .get(req.params.itemId, req.params.id);
-
-    if (!item) {
-      return res.status(404).json({ error: 'Checklist item not found' });
-    }
-
+    if (!item) return res.status(404).json({ error: 'Checklist item not found' });
     const newCompleted = item.completed ? 0 : 1;
-    db.prepare(
-      'UPDATE checklist_items SET completed = ? WHERE id = ?'
-    ).run(newCompleted, req.params.itemId);
-
-    const updated = db.prepare('SELECT * FROM checklist_items WHERE id = ?').get(req.params.itemId);
-    res.json(updated);
+    db.prepare('UPDATE checklist_items SET completed = ? WHERE id = ?').run(newCompleted, req.params.itemId);
+    res.json(db.prepare('SELECT * FROM checklist_items WHERE id = ?').get(req.params.itemId));
   } catch (err) {
     console.error('Error toggling checklist item:', err);
     res.status(500).json({ error: 'Failed to toggle checklist item' });
   }
 });
 
-// POST /:id/photo — upload photo proof
-router.post('/:id/photo', upload.single('photo'), (req, res) => {
+// POST /:id/photo — upload proof (any family member)
+router.post('/:id/photo', requireActiveMember, upload.single('photo'), (req, res) => {
   try {
     const db = getDb();
-    const chore = db.prepare('SELECT * FROM chores WHERE id = ?').get(req.params.id);
-
-    if (!chore) {
-      return res.status(404).json({ error: 'Chore not found' });
-    }
-
-    if (!req.file) {
-      return res.status(400).json({ error: 'No photo file provided' });
-    }
-
+    const chore = db.prepare('SELECT id FROM chores WHERE id = ? AND family_id = ?')
+      .get(req.params.id, req.familyId);
+    if (!chore) return res.status(404).json({ error: 'Chore not found' });
+    if (!req.file) return res.status(400).json({ error: 'No photo file provided' });
     const filename = req.file.filename;
     db.prepare('UPDATE chores SET photo_proof = ? WHERE id = ?').run(filename, req.params.id);
-
     res.json({ photoUrl: '/photos/' + filename });
   } catch (err) {
     console.error('Error uploading photo:', err);
@@ -317,102 +253,58 @@ router.post('/:id/photo', upload.single('photo'), (req, res) => {
   }
 });
 
-// POST /:id/approve — approve chore points
-router.post('/:id/approve', (req, res) => {
+// POST /:id/approve — parent only; approving member derived from active member
+router.post('/:id/approve', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const chore = db.prepare('SELECT * FROM chores WHERE id = ?').get(req.params.id);
+    const chore = db.prepare('SELECT * FROM chores WHERE id = ? AND family_id = ?')
+      .get(req.params.id, req.familyId);
+    if (!chore) return res.status(404).json({ error: 'Chore not found' });
 
-    if (!chore) {
-      return res.status(404).json({ error: 'Chore not found' });
-    }
-
-    const { approvedBy } = req.body;
-    if (!approvedBy) {
-      return res.status(400).json({ error: 'approvedBy is required' });
-    }
-
-    const transaction = db.transaction(() => {
-      // Update chore approval
-      db.prepare(
-        'UPDATE chores SET points_approved = 1, approved_by = ? WHERE id = ?'
-      ).run(approvedBy, req.params.id);
-
-      // Find escrow entries and release them
-      const assignments = db.prepare(
-        'SELECT member_id FROM chore_assignments WHERE chore_id = ?'
-      ).all(req.params.id);
-
+    db.transaction(() => {
+      db.prepare('UPDATE chores SET points_approved = 1, approved_by = ? WHERE id = ?')
+        .run(req.currentMember.id, req.params.id);
+      const assignments = db.prepare('SELECT member_id FROM chore_assignments WHERE chore_id = ?')
+        .all(req.params.id);
+      db.prepare("DELETE FROM points_ledger WHERE chore_id = ? AND type = 'escrow'").run(req.params.id);
       const insertLedger = db.prepare(
-        `INSERT INTO points_ledger (id, member_id, amount, type, chore_id, description, approved_by)
-         VALUES (?, ?, ?, 'released', ?, ?, ?)`
+        `INSERT INTO points_ledger (id, family_id, member_id, amount, type, chore_id, description, approved_by)
+         VALUES (?, ?, ?, ?, 'released', ?, ?, ?)`
       );
-
-      // Also replace any escrow entries with released
-      const escrowEntries = db.prepare(
-        "SELECT * FROM points_ledger WHERE chore_id = ? AND type = 'escrow'"
-      ).all(req.params.id);
-
-      if (escrowEntries.length > 0) {
-        // Clear existing escrows for this chore
-        db.prepare(
-          "DELETE FROM points_ledger WHERE chore_id = ? AND type = 'escrow'"
-        ).run(req.params.id);
+      for (const a of assignments) {
+        insertLedger.run(uuidv4(), req.familyId, a.member_id, chore.points, req.params.id, `Released: ${chore.title}`, req.currentMember.id);
       }
+    })();
 
-      // Create released entries for assigned members
-      for (const assignment of assignments) {
-        insertLedger.run(
-          uuidv4(),
-          assignment.member_id,
-          chore.points,
-          req.params.id,
-          `Released: ${chore.title}`,
-          approvedBy
-        );
-      }
-    });
-
-    transaction();
-
-    const updated = getChoreWithRelations(db, req.params.id);
-    res.json(updated);
+    res.json(getChoreWithRelations(db, req.params.id, req.familyId));
   } catch (err) {
     console.error('Error approving chore:', err);
     res.status(500).json({ error: 'Failed to approve chore' });
   }
 });
 
-// POST /:id/duplicate — clone a chore as a new one-off (no template link)
-router.post('/:id/duplicate', (req, res) => {
+// POST /:id/duplicate — parent only
+router.post('/:id/duplicate', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const src = db.prepare('SELECT * FROM chores WHERE id = ?').get(req.params.id);
+    const src = db.prepare('SELECT * FROM chores WHERE id = ? AND family_id = ?')
+      .get(req.params.id, req.familyId);
     if (!src) return res.status(404).json({ error: 'Chore not found' });
 
-    const { dueDate, createdBy } = req.body || {};
+    const { dueDate } = req.body || {};
     const newId = uuidv4();
 
     const insertChore = db.prepare(
-      `INSERT INTO chores (id, title, description, points, status, created_by, due_date, category)
-       VALUES (?, ?, ?, ?, 'todo', ?, ?, ?)`
+      `INSERT INTO chores (id, family_id, title, description, points, status, created_by, due_date, category)
+       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?)`
     );
-    const insertAssign = db.prepare(
-      'INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)'
-    );
-    const insertStep = db.prepare(
-      'INSERT INTO checklist_items (id, chore_id, text) VALUES (?, ?, ?)'
-    );
+    const insertAssign = db.prepare('INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)');
+    const insertStep = db.prepare('INSERT INTO checklist_items (id, chore_id, text) VALUES (?, ?, ?)');
 
     db.transaction(() => {
       insertChore.run(
-        newId,
-        src.title,
-        src.description || '',
-        src.points,
-        createdBy || src.created_by,
-        dueDate ?? src.due_date,
-        src.category || 'Chore'
+        newId, req.familyId, src.title, src.description || '', src.points,
+        req.currentMember.id, dueDate ?? src.due_date, src.category || 'Chore'
       );
       const assigns = db.prepare('SELECT member_id FROM chore_assignments WHERE chore_id = ?').all(src.id);
       for (const a of assigns) insertAssign.run(newId, a.member_id);
@@ -420,27 +312,22 @@ router.post('/:id/duplicate', (req, res) => {
       for (const s of steps) if (s.text) insertStep.run(uuidv4(), newId, s.text);
     })();
 
-    res.status(201).json(getChoreWithRelations(db, newId));
+    res.status(201).json(getChoreWithRelations(db, newId, req.familyId));
   } catch (err) {
     console.error('Error duplicating chore:', err);
     res.status(500).json({ error: 'Failed to duplicate chore' });
   }
 });
 
-// POST /:id/reject — reject photo proof
-router.post('/:id/reject', (req, res) => {
+// POST /:id/reject — parent only
+router.post('/:id/reject', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const chore = db.prepare('SELECT * FROM chores WHERE id = ?').get(req.params.id);
-
-    if (!chore) {
-      return res.status(404).json({ error: 'Chore not found' });
-    }
-
+    const chore = db.prepare('SELECT id FROM chores WHERE id = ? AND family_id = ?')
+      .get(req.params.id, req.familyId);
+    if (!chore) return res.status(404).json({ error: 'Chore not found' });
     db.prepare('UPDATE chores SET photo_proof = NULL WHERE id = ?').run(req.params.id);
-
-    const updated = getChoreWithRelations(db, req.params.id);
-    res.json(updated);
+    res.json(getChoreWithRelations(db, req.params.id, req.familyId));
   } catch (err) {
     console.error('Error rejecting photo:', err);
     res.status(500).json({ error: 'Failed to reject photo' });

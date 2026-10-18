@@ -1,73 +1,86 @@
 import { createContext, useState, useEffect, useCallback, useRef } from 'react'
 import * as api from '../api'
-import { getCurrentMemberId, setCurrentMemberId, getLocalData, setLocalData } from '../utils/storage'
 
 export const AppContext = createContext()
 
 let toastId = 0
 
+const emptyData = {
+  members: [],
+  chores: [],
+  bulletinPosts: [],
+  homeworkItems: [],
+  snacks: [],
+  stats: null,
+}
+
 export function AppProvider({ children }) {
-  const [members, setMembers] = useState([])
-  const [chores, setChores] = useState([])
-  const [bulletinPosts, setBulletinPosts] = useState([])
-  const [homeworkItems, setHomeworkItems] = useState([])
-  const [snacks, setSnacks] = useState([])
-  const [stats, setStats] = useState(null)
+  const [user, setUser] = useState(null)
+  const [family, setFamily] = useState(null)
   const [currentMember, setCurrentMember] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [authReady, setAuthReady] = useState(false)
+  const [data, setData] = useState(emptyData)
+  const [loading, setLoading] = useState(false)
   const [toasts, setToasts] = useState([])
   const toastTimers = useRef({})
 
-  const loadData = useCallback(async () => {
+  const loadSession = useCallback(async () => {
     try {
-      const [membersData, choresData, bulletinData, homeworkData, snacksData, statsData] =
-        await Promise.all([
-          api.fetchMembers(),
-          api.fetchChores(),
-          api.fetchBulletinPosts(),
-          api.fetchHomework(),
-          api.fetchSnacks(),
-          api.fetchStats(),
-        ])
-      setMembers(membersData)
-      setChores(choresData)
-      setBulletinPosts(bulletinData)
-      setHomeworkItems(homeworkData)
-      setSnacks(snacksData)
-      setStats(statsData)
-      setLocalData('members', membersData)
-      setLocalData('chores', choresData)
-    } catch (err) {
-      const localMembers = getLocalData('members')
-      const localChores = getLocalData('chores')
-      if (localMembers) setMembers(localMembers)
-      if (localChores) setChores(localChores)
+      const me = await api.authMe()
+      setUser(me.user)
+      setFamily(me.family || null)
+      setCurrentMember(me.activeMember || null)
+    } catch {
+      setUser(null); setFamily(null); setCurrentMember(null)
     } finally {
-      setLoading(false)
+      setAuthReady(true)
     }
   }, [])
 
+  useEffect(() => { loadSession() }, [loadSession])
+
+  const loadData = useCallback(async () => {
+    if (!user || !currentMember) { setData(emptyData); return }
+    setLoading(true)
+    try {
+      const [members, chores, bulletinPosts, homeworkItems, snacks, stats] = await Promise.all([
+        api.fetchMembers(), api.fetchChores(), api.fetchBulletinPosts(),
+        api.fetchHomework(), api.fetchSnacks(), api.fetchStats(),
+      ])
+      setData({ members, chores, bulletinPosts, homeworkItems, snacks, stats })
+    } catch (err) {
+      if (err?.status === 401) {
+        setUser(null); setFamily(null); setCurrentMember(null)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [user, currentMember])
+
   useEffect(() => { loadData() }, [loadData])
 
-  useEffect(() => {
-    if (members.length > 0 && !currentMember) {
-      const storedId = getCurrentMemberId()
-      const member = storedId
-        ? members.find((m) => m.id === storedId)
-        : members.find((m) => m.role === 'parent')
-      if (member) {
-        setCurrentMember(member)
-        setCurrentMemberId(member.id)
-      }
-    }
-  }, [members, currentMember])
-
-  const switchMember = (memberId) => {
-    const member = members.find((m) => m.id === memberId)
-    if (member) {
-      setCurrentMember(member)
-      setCurrentMemberId(memberId)
-    }
+  // Auth actions
+  const register = async (payload) => {
+    const resp = await api.authRegister(payload)
+    await loadSession()
+    return resp // includes one-time recoveryCodes
+  }
+  const login = async (payload) => {
+    await api.authLogin(payload)
+    await loadSession()
+  }
+  const logout = async () => {
+    try { await api.authLogout() } catch { /* ignore */ }
+    setUser(null); setFamily(null); setCurrentMember(null)
+    setData(emptyData)
+  }
+  const selectMember = async (memberId, pin) => {
+    const resp = await api.authSelectMember(memberId, pin)
+    setCurrentMember(resp.activeMember)
+  }
+  const switchMember = async () => {
+    try { await api.authClearActiveMember() } catch { /* ignore */ }
+    setCurrentMember(null)
   }
 
   const refresh = () => loadData()
@@ -75,8 +88,7 @@ export function AppProvider({ children }) {
   const dismissToast = useCallback((id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id))
     if (toastTimers.current[id]) {
-      clearTimeout(toastTimers.current[id])
-      delete toastTimers.current[id]
+      clearTimeout(toastTimers.current[id]); delete toastTimers.current[id]
     }
   }, [])
 
@@ -93,20 +105,11 @@ export function AppProvider({ children }) {
   const isParent = currentMember?.role === 'parent'
 
   const value = {
-    members,
-    chores,
-    bulletinPosts,
-    homeworkItems,
-    snacks,
-    stats,
-    currentMember,
-    isParent,
-    loading,
-    refresh,
-    switchMember,
-    toasts,
-    notify,
-    dismissToast,
+    ...data,
+    user, family, currentMember, isParent,
+    authReady, loading,
+    register, login, logout, selectMember, switchMember, refresh,
+    toasts, notify, dismissToast,
   }
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>

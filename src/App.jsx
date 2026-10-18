@@ -1,5 +1,5 @@
 import { useContext } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Row, Col, Spinner } from 'react-bootstrap'
 import { AppProvider, AppContext } from './context/AppContext'
 import Layout from './components/layout/Layout'
@@ -13,6 +13,10 @@ import Achievements from './components/gamification/Achievements'
 import History from './components/gamification/History'
 import PointsBar from './components/gamification/PointsBar'
 import Toaster from './components/common/Toaster'
+import Login from './components/auth/Login'
+import Register from './components/auth/Register'
+import ForgotPassword from './components/auth/ForgotPassword'
+import SelectMember from './components/auth/SelectMember'
 
 function StatsPage() {
   return (
@@ -31,33 +35,56 @@ function StatsPage() {
   )
 }
 
+function RequireUser({ children }) {
+  const { user, authReady } = useContext(AppContext)
+  const location = useLocation()
+  if (!authReady) return <FullSpinner />
+  if (!user) return <Navigate to="/login" state={{ from: location }} replace />
+  return children
+}
+
+function RequireActiveMember({ children }) {
+  const { user, currentMember, authReady } = useContext(AppContext)
+  if (!authReady) return <FullSpinner />
+  if (!user) return <Navigate to="/login" replace />
+  if (!currentMember) return <Navigate to="/select-member" replace />
+  return children
+}
+
+function FullSpinner() {
+  return (
+    <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '80vh' }}>
+      <Spinner animation="border" variant="warning" />
+      <span className="ms-3 fs-5 rt-blink" style={{ fontFamily: 'var(--rt-font-display)' }}>
+        LOADING...
+      </span>
+    </div>
+  )
+}
+
 function AppContent() {
-  const { loading } = useContext(AppContext)
-  if (loading) {
-    return (
-      <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '80vh' }}>
-        <Spinner animation="border" variant="warning" />
-        <span className="ms-3 fs-5 rt-blink" style={{ fontFamily: 'var(--rt-font-display)' }}>
-          LOADING...
-        </span>
-      </div>
-    )
-  }
+  const { authReady, loading, user, currentMember } = useContext(AppContext)
+  if (!authReady) return <FullSpinner />
+
   return (
     <>
       <Routes>
-        <Route element={<Layout />}>
-          <Route path="/" element={
-            <>
-              <PointsBar />
-              <KanbanBoard />
-            </>
-          } />
+        <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+        <Route path="/register" element={user ? <Navigate to="/" replace /> : <Register />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/select-member" element={
+          <RequireUser>{currentMember ? <Navigate to="/" replace /> : <SelectMember />}</RequireUser>
+        } />
+
+        <Route element={<RequireActiveMember><Layout /></RequireActiveMember>}>
+          <Route path="/" element={loading ? <FullSpinner /> : <><PointsBar /><KanbanBoard /></>} />
           <Route path="/bulletin" element={<BulletinBoard />} />
           <Route path="/homework" element={<HomeworkChart />} />
           <Route path="/snacks" element={<SnackShop />} />
           <Route path="/stats" element={<StatsPage />} />
         </Route>
+
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toaster />
     </>

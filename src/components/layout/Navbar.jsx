@@ -5,7 +5,7 @@ import { FaStar, FaUser, FaCrown, FaGamepad } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 
 export default function Navbar() {
-  const { members, currentMember, switchMember, isParent } = useContext(AppContext);
+  const { members, currentMember, switchMember, logout, isParent } = useContext(AppContext);
   const location = useLocation();
   const [points, setPoints] = useState(null);
   const [pointsLoading, setPointsLoading] = useState(false);
@@ -14,7 +14,7 @@ export default function Navbar() {
     if (!currentMember) return;
     let cancelled = false;
     setPointsLoading(true);
-    fetch(`/api/points/${currentMember.id}`)
+    fetch(`/api/points/${currentMember.id}`, { credentials: 'include' })
       .then((r) => r.ok ? r.json() : Promise.reject())
       .then((data) => {
         if (cancelled) return;
@@ -32,8 +32,6 @@ export default function Navbar() {
     { label: 'SHOP', path: '/snacks' },
     { label: 'STATS', path: '/stats' },
   ];
-
-  const otherMembers = members.filter((m) => m.id !== currentMember?.id);
 
   return (
     <BsNavbar expand="lg" sticky="top">
@@ -110,25 +108,13 @@ export default function Navbar() {
                   <NavDropdown.Divider />
                 </>
               )}
-              <NavDropdown.Item disabled style={{ fontSize: '0.65rem', fontFamily: 'var(--rt-font-display)' }}>
-                SWITCH PLAYER
+              <NavDropdown.Item onClick={() => switchMember()}>
+                Switch player
               </NavDropdown.Item>
-              {otherMembers.length === 0 && (
-                <NavDropdown.Item disabled>No other members</NavDropdown.Item>
-              )}
-              {otherMembers.map((member) => (
-                <NavDropdown.Item
-                  key={member.id}
-                  onClick={() => switchMember(member.id)}
-                  className="d-flex align-items-center gap-2"
-                >
-                  <span>{member.avatar || '👤'}</span>
-                  <span>{member.name}</span>
-                  <Badge bg="secondary" className="ms-1">
-                    {member.role}
-                  </Badge>
-                </NavDropdown.Item>
-              ))}
+              <NavDropdown.Divider />
+              <NavDropdown.Item onClick={() => logout()}>
+                Sign out
+              </NavDropdown.Item>
             </NavDropdown>
           </Nav>
         </BsNavbar.Collapse>
