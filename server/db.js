@@ -134,6 +134,116 @@ export function initializeDb() {
       FOREIGN KEY (member_id) REFERENCES family_members(id),
       FOREIGN KEY (achievement_id) REFERENCES achievements(id)
     );
+
+    /* === Recurring chore templates ===
+       frequency: once | daily | weekdays | weekly | custom
+       days_of_week: CSV of 0-6 (Sun=0) — required when frequency='custom' or 'weekly'
+       interval: every N units of frequency (default 1)
+       start_date / end_date: bounds the recurrence (YYYY-MM-DD, nullable)
+    */
+    CREATE TABLE IF NOT EXISTS chore_templates (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      points INTEGER DEFAULT 10,
+      category TEXT DEFAULT 'Chore',
+      created_by TEXT NOT NULL,
+      frequency TEXT NOT NULL DEFAULT 'daily'
+        CHECK(frequency IN ('once','daily','weekdays','weekly','custom')),
+      days_of_week TEXT DEFAULT '',
+      interval INTEGER DEFAULT 1,
+      start_date TEXT,
+      end_date TEXT,
+      active INTEGER DEFAULT 1,
+      per_member INTEGER DEFAULT 1, /* 1 = one instance per assignee per day, 0 = shared */
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (created_by) REFERENCES family_members(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS chore_template_assignments (
+      template_id TEXT NOT NULL,
+      member_id TEXT NOT NULL,
+      PRIMARY KEY (template_id, member_id),
+      FOREIGN KEY (template_id) REFERENCES chore_templates(id) ON DELETE CASCADE,
+      FOREIGN KEY (member_id) REFERENCES family_members(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS chore_template_checklist (
+      id TEXT PRIMARY KEY,
+      template_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      order_index INTEGER DEFAULT 0,
+      FOREIGN KEY (template_id) REFERENCES chore_templates(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chores_status ON chores(status);
+  `);
+
+  // === Idempotent ALTER TABLE migrations ===
+  // SQLite has no IF NOT EXISTS for ADD COLUMN; check pragma first.
+  const choreCols = db.prepare("PRAGMA table_info(chores)").all().map((c) => c.name);
+  if (!choreCols.includes('template_id')) {
+    db.exec(`ALTER TABLE chores ADD COLUMN template_id TEXT REFERENCES chore_templates(id) ON DELETE SET NULL`);
+  }
+  if (!choreCols.includes('occurrence_date')) {
+    db.exec(`ALTER TABLE chores ADD COLUMN occurrence_date TEXT`);
+  }
+
+  // CHECK constraints can't be altered in place — rebuild table to add 'failed' status.
+  // Idempotent: detect whether the current schema already permits 'failed'.
+  const choreSchemaSql = db.prepare(
+    "SELECT sql FROM sqlite_master WHERE type='table' AND name='chores'"
+  ).get()?.sql || '';
+  if (!choreSchemaSql.includes("'failed'")) {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN;
+      CREATE TABLE chores__new (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        points INTEGER DEFAULT 10,
+        status TEXT DEFAULT 'todo' CHECK(status IN ('todo','in_progress','done','failed')),
+        created_by TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        due_date TEXT,
+        category TEXT DEFAULT 'general',
+        photo_proof TEXT,
+        points_approved INTEGER DEFAULT 0,
+        approved_by TEXT,
+        template_id TEXT REFERENCES chore_templates(id) ON DELETE SET NULL,
+        occurrence_date TEXT,
+        FOREIGN KEY (created_by) REFERENCES family_members(id)
+      );
+      INSERT INTO chores__new
+        (id, title, description, points, status, created_by, created_at, due_date, category, photo_proof, points_approved, approved_by, template_id, occurrence_date)
+        SELECT id, title, description, points, status, created_by, created_at, due_date, category, photo_proof, points_approved, approved_by, template_id, occurrence_date
+        FROM chores;
+      DROP TABLE chores;
+      ALTER TABLE chores__new RENAME TO chores;
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+  // Idempotent ADD COLUMN for per-member splitting
+  const choreCols2 = db.prepare("PRAGMA table_info(chores)").all().map((c) => c.name);
+  if (!choreCols2.includes('instance_member_id')) {
+    db.exec(`ALTER TABLE chores ADD COLUMN instance_member_id TEXT`);
+  }
+  const tplCols = db.prepare("PRAGMA table_info(chore_templates)").all().map((c) => c.name);
+  if (!tplCols.includes('per_member')) {
+    db.exec(`ALTER TABLE chore_templates ADD COLUMN per_member INTEGER DEFAULT 1`);
+  }
+
+  // Create indexes (re-run safe). The unique index now includes instance_member_id so
+  // per-member templates can have one row per (template, date, member); shared templates
+  // (instance_member_id IS NULL) are uniqued in code, since SQLite treats NULLs as distinct.
+  db.exec(`
+    DROP INDEX IF EXISTS uq_chores_template_occurrence;
+    CREATE INDEX IF NOT EXISTS idx_chores_template ON chores(template_id);
+    CREATE INDEX IF NOT EXISTS idx_chores_occurrence ON chores(occurrence_date);
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_chores_template_occurrence_member
+      ON chores(template_id, occurrence_date, instance_member_id) WHERE template_id IS NOT NULL;
   `);
 
   // Seed default family members

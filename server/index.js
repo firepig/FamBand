@@ -6,6 +6,7 @@ import { initializeDb } from './db.js';
 import authMiddleware from './middleware/auth.js';
 import membersRouter from './routes/members.js';
 import choresRouter from './routes/chores.js';
+import templatesRouter from './routes/templates.js';
 import pointsRouter from './routes/points.js';
 import bulletinRouter from './routes/bulletin.js';
 import homeworkRouter from './routes/homework.js';
@@ -41,6 +42,7 @@ if (process.env.NODE_ENV === 'production') {
 // API routes
 app.use('/api/members', membersRouter);
 app.use('/api/chores', choresRouter);
+app.use('/api/templates', templatesRouter);
 app.use('/api/points', pointsRouter);
 app.use('/api/bulletin', bulletinRouter);
 app.use('/api/homework', homeworkRouter);
@@ -69,7 +71,7 @@ app.use((err, req, res, _next) => {
 
 // Start server (only when not imported for testing)
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`FamBand server running on port ${PORT}`);
   });
 }

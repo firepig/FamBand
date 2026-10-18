@@ -4,6 +4,7 @@ import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDb } from '../db.js';
+import { materializeChores } from '../lib/materialize.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,6 +47,8 @@ function getChoreWithRelations(db, id) {
 router.get('/', (req, res) => {
   try {
     const db = getDb();
+    // Lazily ensure recurring instances exist for the rolling window before reading.
+    try { materializeChores(db); } catch (mErr) { console.error('materialize error:', mErr); }
     let chores;
     if (req.query.status) {
       chores = db.prepare('SELECT * FROM chores WHERE status = ? ORDER BY created_at DESC').all(req.query.status);
@@ -377,6 +380,50 @@ router.post('/:id/approve', (req, res) => {
   } catch (err) {
     console.error('Error approving chore:', err);
     res.status(500).json({ error: 'Failed to approve chore' });
+  }
+});
+
+// POST /:id/duplicate — clone a chore as a new one-off (no template link)
+router.post('/:id/duplicate', (req, res) => {
+  try {
+    const db = getDb();
+    const src = db.prepare('SELECT * FROM chores WHERE id = ?').get(req.params.id);
+    if (!src) return res.status(404).json({ error: 'Chore not found' });
+
+    const { dueDate, createdBy } = req.body || {};
+    const newId = uuidv4();
+
+    const insertChore = db.prepare(
+      `INSERT INTO chores (id, title, description, points, status, created_by, due_date, category)
+       VALUES (?, ?, ?, ?, 'todo', ?, ?, ?)`
+    );
+    const insertAssign = db.prepare(
+      'INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)'
+    );
+    const insertStep = db.prepare(
+      'INSERT INTO checklist_items (id, chore_id, text) VALUES (?, ?, ?)'
+    );
+
+    db.transaction(() => {
+      insertChore.run(
+        newId,
+        src.title,
+        src.description || '',
+        src.points,
+        createdBy || src.created_by,
+        dueDate ?? src.due_date,
+        src.category || 'Chore'
+      );
+      const assigns = db.prepare('SELECT member_id FROM chore_assignments WHERE chore_id = ?').all(src.id);
+      for (const a of assigns) insertAssign.run(newId, a.member_id);
+      const steps = db.prepare('SELECT text FROM checklist_items WHERE chore_id = ? ORDER BY rowid ASC').all(src.id);
+      for (const s of steps) if (s.text) insertStep.run(uuidv4(), newId, s.text);
+    })();
+
+    res.status(201).json(getChoreWithRelations(db, newId));
+  } catch (err) {
+    console.error('Error duplicating chore:', err);
+    res.status(500).json({ error: 'Failed to duplicate chore' });
   }
 });
 

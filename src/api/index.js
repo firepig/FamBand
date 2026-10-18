@@ -109,6 +109,27 @@ export async function uploadPhoto(choreId, file) {
   }
 }
 
+export async function duplicateChore(choreId, data = {}) {
+  return apiFetch(`/api/chores/${choreId}/duplicate`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+// Templates (recurring chores)
+export async function fetchTemplates() {
+  return apiFetch('/api/templates')
+}
+export async function createTemplate(data) {
+  return apiFetch('/api/templates', { method: 'POST', body: JSON.stringify(data) })
+}
+export async function updateTemplate(id, data) {
+  return apiFetch(`/api/templates/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+}
+export async function deleteTemplate(id) {
+  return apiFetch(`/api/templates/${id}`, { method: 'DELETE' })
+}
+
 export async function approveChore(choreId, approvedBy) {
   return apiFetch(`/api/chores/${choreId}/approve`, {
     method: 'POST',

@@ -48,7 +48,8 @@ export default function KanbanBoard() {
   const children = useMemo(() => members.filter((m) => m.role === 'child'), [members]);
 
   const filteredChores = useMemo(() => {
-    let result = chores || [];
+    // Hide failed (auto-expired recurring) from the active board.
+    let result = (chores || []).filter((c) => c.status !== 'failed');
     if (filterMember !== 'all') {
       result = result.filter((chore) => getAssigneeIds(chore).includes(filterMember));
     }

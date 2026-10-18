@@ -1,188 +1,178 @@
-import { useState, useEffect, useContext, useCallback } from 'react';
-import { Card, Row, Col, ProgressBar, Spinner } from 'react-bootstrap';
-import { FaCrown, FaStar, FaCoins } from 'react-icons/fa';
+import { useState, useEffect, useContext, useCallback, useMemo } from 'react';
+import { Spinner } from 'react-bootstrap';
+import { FaStar, FaCrown } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import { fetchPoints } from '../../api';
 
 const LEVEL_BASE = 100;
+const getLevel = (p) => Math.floor(p / LEVEL_BASE) + 1;
 
-function getLevel(points) {
-  return Math.floor(points / LEVEL_BASE) + 1;
+function parseLocalDate(value) {
+  if (!value) return null;
+  const str = String(value).split('T')[0];
+  const [y, m, d] = str.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
 }
-
-function getLevelProgress(points) {
-  const progress = (points % LEVEL_BASE) / LEVEL_BASE;
-  return Math.min(Math.max(progress, 0), 1) * 100;
+function isToday(value) {
+  const d = parseLocalDate(value);
+  if (!d) return false;
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  return d.getTime() === t.getTime();
+}
+function getAssigneeIds(chore) {
+  return (chore.assignments || chore.assignedTo || []).map((a) => (typeof a === 'object' ? a.id : a));
 }
 
 export default function PointsBar() {
-  const { members, currentMember, stats, loading } = useContext(AppContext);
+  const { members, chores, stats, loading, switchMember } = useContext(AppContext);
+
+  // Daily progress: chores due today (or any todo/in_progress with no due) per member
+  const dailyProgress = useMemo(() => {
+    const map = {};
+    members.forEach((m) => { map[m.id] = { done: 0, total: 0 }; });
+    (chores || []).forEach((chore) => {
+      if (chore.status === 'failed') return;
+      const due = chore.dueDate || chore.due_date;
+      if (!due || !isToday(due)) return;
+      const ids = getAssigneeIds(chore);
+      ids.forEach((id) => {
+        if (!map[id]) return;
+        map[id].total += 1;
+        if (chore.status === 'done') map[id].done += 1;
+      });
+    });
+    return map;
+  }, [chores, members]);
   const [pointsMap, setPointsMap] = useState({});
   const [loadingPoints, setLoadingPoints] = useState(true);
-  const [animatingId, setAnimatingId] = useState(null);
 
   const loadAllPoints = useCallback(async () => {
     setLoadingPoints(true);
     const map = {};
-    try {
-      const results = await Promise.all(
-        members.map(async (m) => {
-          try {
-            const data = await fetchPoints(m.id);
-            return { id: m.id, balance: data.balance ?? 0 };
-          } catch {
-            return { id: m.id, balance: 0 };
-          }
-        })
-      );
-      results.forEach((r) => {
-        map[r.id] = r.balance;
-      });
-    } catch {
-      members.forEach((m) => {
-        map[m.id] = 0;
-      });
-    }
+    const results = await Promise.all(
+      members.map((m) =>
+        fetchPoints(m.id).then((d) => ({ id: m.id, balance: d.balance ?? 0 })).catch(() => ({ id: m.id, balance: 0 }))
+      )
+    );
+    results.forEach((r) => { map[r.id] = r.balance; });
     setPointsMap(map);
     setLoadingPoints(false);
   }, [members]);
 
   useEffect(() => {
-    if (members.length > 0) {
-      loadAllPoints();
-    }
+    if (members.length > 0) loadAllPoints();
   }, [loadAllPoints, members.length]);
 
-  // Re-fetch when stats changes (e.g. after a chore is completed)
-  useEffect(() => {
-    if (stats) {
-      loadAllPoints();
-    }
-  }, [stats]);
+  useEffect(() => { if (stats) loadAllPoints(); }, [stats]); // eslint-disable-line
 
-  // Animate points change
-  useEffect(() => {
-    if (!loadingPoints && Object.keys(pointsMap).length > 0) {
-      // Trigger coin bounce animation on any point card
-      setAnimatingId(Date.now());
-    }
-  }, [pointsMap, loadingPoints]);
+  if (loading || members.length === 0) return null;
 
-  const children = members.filter((m) => m.role === 'child');
-  const parents = members.filter((m) => m.role === 'parent');
-
-  if (loading || (loadingPoints && members.length > 0)) {
-    return (
-      <div className="text-center py-3">
-        <Spinner animation="border" variant="warning" />
-        <p className="text-muted small mt-1">Loading points...</p>
-      </div>
-    );
-  }
-
-  if (members.length === 0) {
-    return (
-      <Card className="shadow-sm text-center p-4">
-        <Card.Body>
-          <FaCoins size={40} className="text-muted mb-2" />
-          <p className="text-muted mb-0">No family members yet. Add some to start tracking points!</p>
-        </Card.Body>
-      </Card>
-    );
-  }
+  // Compact horizontal strip — kids first, then parents
+  const ordered = [...members].sort((a, b) => {
+    if (a.role === b.role) return 0;
+    return a.role === 'child' ? -1 : 1;
+  });
 
   return (
-    <Row className="g-2 align-items-stretch">
-      {children.map((member) => {
-        const points = pointsMap[member.id] ?? 0;
-        const level = getLevel(points);
-        const levelProgress = getLevelProgress(points);
-
+    <div
+      className="d-flex flex-wrap align-items-center gap-2 mb-3"
+      style={{
+        padding: '6px 8px',
+        background: 'var(--rt-bg-2)',
+        border: '2px solid var(--rt-border)',
+        boxShadow: '3px 3px 0 0 var(--rt-border-dark)',
+      }}
+      title="Click a player to switch"
+    >
+      {loadingPoints && <Spinner animation="border" size="sm" variant="warning" />}
+      {ordered.map((m) => {
+        const pts = pointsMap[m.id] ?? 0;
+        const isParent = m.role === 'parent';
         return (
-          <Col xs={6} sm={4} md={3} lg={2} key={member.id}>
-            <Card
-              className="shadow-sm h-100 position-relative overflow-hidden"
-              style={{
-                borderLeft: `4px solid ${member.color || '#6c757d'}`,
-                background: `linear-gradient(135deg, ${member.color}15 0%, #ffffff 80%)`,
-                transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-                cursor: 'default',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-3px)';
-                e.currentTarget.style.boxShadow = '0 6px 20px rgba(0,0,0,0.12)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = '';
-                e.currentTarget.style.boxShadow = '';
-              }}
-            >
-              <Card.Body className="text-center p-3">
-                <div style={{ fontSize: '2.5rem', lineHeight: 1 }}>
-                  {member.avatar || '👤'}
-                </div>
-                <div className="fw-bold mt-1" style={{ fontSize: '0.85rem', color: member.color || '#333' }}>
-                  {member.name}
-                </div>
-                <div className={`d-flex align-items-center justify-content-center gap-1 mt-1 ${animatingId ? 'coin-bounce' : ''}`}>
-                  <FaStar className="text-warning" size={14} />
+          <button
+            key={m.id}
+            type="button"
+            onClick={() => switchMember(m.id)}
+            style={{
+              all: 'unset',
+              cursor: 'pointer',
+              display: 'inline-grid',
+              gridTemplateColumns: 'auto 1fr auto',
+              alignItems: 'center',
+              columnGap: 8,
+              padding: '4px 10px',
+              minWidth: 200,
+              border: `2px solid ${isParent ? 'var(--rt-ink-muted)' : (m.color || 'var(--rt-accent)')}`,
+              background: 'var(--rt-panel)',
+              fontFamily: 'var(--rt-font-display)',
+              fontSize: '0.6rem',
+              lineHeight: 1,
+              color: 'var(--rt-ink)',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--rt-bg-3)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--rt-panel)'; }}
+          >
+            <span style={{ fontSize: '1rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              {m.avatar || '👤'}
+              <span style={{ fontSize: '0.6rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                {m.name}
+                {isParent && <FaCrown size={9} style={{ color: 'var(--rt-accent)' }} />}
+              </span>
+            </span>
+
+            {(() => {
+              const dp = dailyProgress[m.id] || { done: 0, total: 0 };
+              const pct = dp.total === 0 ? 0 : (dp.done / dp.total) * 100;
+              const complete = dp.total > 0 && dp.done === dp.total;
+              return (
+                <span
+                  title={dp.total === 0 ? 'No chores today' : `Today: ${dp.done}/${dp.total} (${Math.round(pct)}%)`}
+                  style={{
+                    position: 'relative',
+                    height: 10,
+                    background: 'var(--rt-bg-3)',
+                    border: '1px solid var(--rt-border-dark)',
+                    boxShadow: 'inset 1px 1px 0 rgba(0,0,0,0.4)',
+                    minWidth: 60,
+                    opacity: dp.total === 0 ? 0.4 : 1,
+                  }}
+                >
                   <span
-                    className="fw-bold"
-                    style={{ fontSize: '1.3rem', color: '#333' }}
-                  >
-                    {points}
-                  </span>
-                </div>
-                <div className="mt-1">
-                  <small className="text-muted" style={{ fontSize: '0.7rem' }}>
-                    Level {level}
-                  </small>
-                  <ProgressBar
-                    now={levelProgress}
-                    variant="warning"
-                    style={{ height: 4, borderRadius: 2 }}
-                    className="mt-1"
+                    style={{
+                      position: 'absolute', left: 0, top: 0, bottom: 0,
+                      width: `${pct}%`,
+                      background: complete ? 'var(--rt-success)' : 'var(--rt-accent)',
+                      transition: 'width 0.2s steps(8)',
+                    }}
                   />
-                  <small className="text-muted" style={{ fontSize: '0.6rem' }}>
-                    {levelProgress.toFixed(0)}% to next level
-                  </small>
-                </div>
-              </Card.Body>
-            </Card>
-          </Col>
-        );
-      })}
+                  {[20, 40, 60, 80].map((t) => (
+                    <span key={t} style={{
+                      position: 'absolute', top: 0, bottom: 0, left: `${t}%`,
+                      width: 1, background: 'var(--rt-border-dark)', opacity: 0.6,
+                    }} />
+                  ))}
+                </span>
+              );
+            })()}
 
-      {parents.map((parent) => {
-        const points = pointsMap[parent.id] ?? 0;
-        return (
-          <Col xs={6} sm={4} md={3} lg={2} key={parent.id}>
-            <Card
-              className="shadow-sm h-100"
-              style={{
-                borderLeft: `4px solid ${parent.color || '#6c757d'}`,
-                background: '#f8f9fa',
-              }}
-            >
-              <Card.Body className="text-center p-3">
-                <div style={{ fontSize: '2rem', lineHeight: 1 }}>
-                  {parent.avatar || '👤'}
-                </div>
-                <div className="fw-bold mt-1" style={{ fontSize: '0.85rem', color: parent.color || '#333' }}>
-                  {parent.name}
-                </div>
-                <div className="mt-1">
-                  <FaCrown className="text-warning" size={18} />
-                </div>
-                <div className="d-flex align-items-center justify-content-center gap-1 mt-1">
-                  <FaStar className="text-warning" size={10} />
-                  <small className="fw-semibold">{points}</small>
-                </div>
-              </Card.Body>
-            </Card>
-          </Col>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, justifySelf: 'end' }}>
+              <span style={{ color: 'var(--rt-accent)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <FaStar size={9} /> {pts}
+              </span>
+              {(() => {
+                const dp = dailyProgress[m.id] || { done: 0, total: 0 };
+                if (dp.total === 0) return null;
+                return (
+                  <span style={{ color: 'var(--rt-ink-dim)', fontSize: '0.55rem' }}>
+                    {dp.done}/{dp.total}
+                  </span>
+                );
+              })()}
+            </span>
+          </button>
         );
       })}
-    </Row>
+    </div>
   );
 }

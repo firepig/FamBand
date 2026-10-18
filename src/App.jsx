@@ -10,6 +10,7 @@ import SnackShop from './components/family/SnackShop'
 import Charts from './components/gamification/Charts'
 import Leaderboard from './components/gamification/Leaderboard'
 import Achievements from './components/gamification/Achievements'
+import History from './components/gamification/History'
 import PointsBar from './components/gamification/PointsBar'
 import Toaster from './components/common/Toaster'
 
@@ -22,8 +23,9 @@ function StatsPage() {
         <Col lg={8}><Charts /></Col>
         <Col lg={4}><Leaderboard /></Col>
       </Row>
-      <Row className="mt-4">
-        <Col><Achievements /></Col>
+      <Row className="mt-4 g-4">
+        <Col lg={6}><History /></Col>
+        <Col lg={6}><Achievements /></Col>
       </Row>
     </div>
   )

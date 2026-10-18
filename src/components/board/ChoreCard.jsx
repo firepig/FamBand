@@ -15,6 +15,8 @@ import {
   FaTimes,
   FaCheck,
   FaEdit,
+  FaCopy,
+  FaSyncAlt,
 } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import {
@@ -23,6 +25,7 @@ import {
   approveChore,
   rejectChore,
   toggleChecklistItem,
+  duplicateChore,
 } from '../../api';
 import Checklist from '../chores/Checklist';
 import PhotoUpload from '../chores/PhotoUpload';
@@ -75,7 +78,9 @@ export default function ChoreCard({ chore }) {
     checklist, dueDate, due_date,
     category, photoProof, photo_proof,
     pointsApproved, points_approved,
+    template_id, templateId,
   } = chore;
+  const isRecurring = !!(template_id || templateId);
   const photo = photoProof ?? photo_proof;
   const approved = !!(pointsApproved ?? points_approved);
   const due = dueDate ?? due_date;
@@ -141,6 +146,18 @@ export default function ChoreCard({ chore }) {
     }
   };
 
+  const handleDuplicate = async () => {
+    if (!currentMember?.id) return;
+    try {
+      await duplicateChore(id, { createdBy: currentMember.id });
+      notify?.('Quest duplicated!', 'success');
+      setShowModal(false);
+      refresh();
+    } catch (err) {
+      notify?.(err.message || 'Duplicate failed', 'error');
+    }
+  };
+
   const handleDelete = async () => {
     try {
       await deleteChore(id);
@@ -190,6 +207,11 @@ export default function ChoreCard({ chore }) {
             {category && (
               <span className="rt-chore__cat" style={{ background: catColor }}>
                 {category}
+              </span>
+            )}
+            {isRecurring && (
+              <span className="rt-chore__cat" style={{ background: 'var(--rt-secondary)' }} title="Repeating quest">
+                <FaSyncAlt size={8} style={{ marginRight: 3 }} />REPEAT
               </span>
             )}
             {totalItems > 0 && (
@@ -311,6 +333,11 @@ export default function ChoreCard({ chore }) {
             {isParent && (
               <Button variant="outline-primary" size="sm" onClick={() => { setShowModal(false); setShowEdit(true); }}>
                 <FaEdit className="me-1" /> EDIT
+              </Button>
+            )}
+            {isParent && (
+              <Button variant="outline-warning" size="sm" onClick={handleDuplicate} title="Make a copy">
+                <FaCopy className="me-1" /> DUPE
               </Button>
             )}
             {isParent && !confirmDelete && (

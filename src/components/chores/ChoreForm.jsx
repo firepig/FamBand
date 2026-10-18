@@ -10,10 +10,18 @@ import {
 } from 'react-bootstrap';
 import { FaPlus, FaTimes } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
-import { createChore, updateChore } from '../../api';
+import { createChore, updateChore, createTemplate } from '../../api';
 
 const QUICK_POINTS = [5, 10, 20, 50];
 const CATEGORIES = ['Chore', 'Homework', 'Outdoor', 'Kitchen', 'Other'];
+const FREQ_OPTIONS = [
+  { value: 'once',     label: "Doesn't repeat" },
+  { value: 'daily',    label: 'Every day' },
+  { value: 'weekdays', label: 'Weekdays (Mon–Fri)' },
+  { value: 'weekly',   label: 'Weekly (pick days)' },
+  { value: 'custom',   label: 'Custom (pick days)' },
+];
+const DOW_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) {
   const { members, currentMember, isParent, refresh, notify } = useContext(AppContext);
@@ -27,6 +35,9 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   const [category, setCategory] = useState('Chore');
   const [dueDate, setDueDate] = useState('');
   const [checklist, setChecklist] = useState([]);
+  const [frequency, setFrequency] = useState('once');
+  const [daysOfWeek, setDaysOfWeek] = useState([]); // numeric 0-6
+  const [perMember, setPerMember] = useState(true);
   const [validated, setValidated] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -70,6 +81,9 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       setCategory('Chore');
       setDueDate('');
       setChecklist([]);
+      setFrequency('once');
+      setDaysOfWeek([]);
+      setPerMember(true);
     }
     setValidated(false);
     setError(null);
@@ -108,29 +122,62 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       return;
     }
 
-    const payload = {
-      title: title.trim(),
-      description: description.trim(),
-      points: Number(points) || 0,
-      assignedTo,
-      category,
-      dueDate: dueDate || null,
-      createdBy: currentMember.id,
-      checklist: checklist
-        .filter((i) => i.text.trim() !== '')
-        .map((i) => ({ ...i, text: i.text.trim() })),
-    };
+    // Validate days for weekly/custom
+    if ((frequency === 'weekly' || frequency === 'custom') && daysOfWeek.length === 0) {
+      setError('Pick at least one day of the week for the repeat schedule.');
+      return;
+    }
+
+    const cleanChecklist = checklist
+      .filter((i) => i.text.trim() !== '')
+      .map((i) => ({ ...i, text: i.text.trim() }));
 
     setSubmitting(true);
     setError(null);
 
     try {
       if (isEditing) {
-        await updateChore(editChore.id, payload);
+        // Editing an existing instance — don't change its recurrence here.
+        await updateChore(editChore.id, {
+          title: title.trim(),
+          description: description.trim(),
+          points: Number(points) || 0,
+          assignedTo,
+          category,
+          dueDate: dueDate || null,
+          createdBy: currentMember.id,
+          checklist: cleanChecklist,
+        });
         notify?.('Quest updated!', 'success');
-      } else {
-        await createChore(payload);
+      } else if (frequency === 'once') {
+        await createChore({
+          title: title.trim(),
+          description: description.trim(),
+          points: Number(points) || 0,
+          assignedTo,
+          category,
+          dueDate: dueDate || null,
+          createdBy: currentMember.id,
+          checklist: cleanChecklist,
+        });
         notify?.('New quest added!', 'success');
+      } else {
+        // Recurring → create a template; instances materialize on next fetch.
+        await createTemplate({
+          title: title.trim(),
+          description: description.trim(),
+          points: Number(points) || 0,
+          assignedTo,
+          category,
+          createdBy: currentMember.id,
+          checklist: cleanChecklist,
+          frequency,
+          daysOfWeek: (frequency === 'weekly' || frequency === 'custom') ? daysOfWeek : [],
+          startDate: dueDate || null,
+          active: true,
+          perMember,
+        });
+        notify?.('Repeating quest set up!', 'success');
       }
       refresh();
       onHide();
@@ -140,6 +187,10 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const toggleDow = (n) => {
+    setDaysOfWeek((prev) => prev.includes(n) ? prev.filter((d) => d !== n) : [...prev, n].sort());
   };
 
   return (
@@ -251,7 +302,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
               </Form.Select>
             </Col>
             <Col sm={6}>
-              <Form.Label>Due Date</Form.Label>
+              <Form.Label>{frequency === 'once' ? 'Due Date' : 'Starts On (optional)'}</Form.Label>
               <Form.Control
                 type="date"
                 value={dueDate}
@@ -259,6 +310,65 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
               />
             </Col>
           </Row>
+
+          {!isEditing && (
+            <Form.Group className="mb-3">
+              <Form.Label>Repeats</Form.Label>
+              <Form.Select value={frequency} onChange={(e) => setFrequency(e.target.value)}>
+                {FREQ_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </Form.Select>
+
+              {(frequency === 'weekly' || frequency === 'custom') && (
+                <div className="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Days of week">
+                  {DOW_LABELS.map((lbl, idx) => {
+                    const active = daysOfWeek.includes(idx);
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => toggleDow(idx)}
+                        style={{
+                          all: 'unset',
+                          cursor: 'pointer',
+                          width: 36, height: 36,
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          border: `2px solid ${active ? 'var(--rt-accent)' : 'var(--rt-border)'}`,
+                          background: active ? 'var(--rt-accent)' : 'var(--rt-bg-2)',
+                          color: active ? 'var(--rt-border-dark)' : 'var(--rt-ink)',
+                          fontFamily: 'var(--rt-font-display)',
+                          fontSize: '0.7rem',
+                          boxShadow: active ? 'inset 1px 1px 0 rgba(0,0,0,0.3)' : '2px 2px 0 var(--rt-border-dark)',
+                        }}
+                        title={['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][idx]}
+                      >
+                        {lbl}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {frequency !== 'once' && (
+                <>
+                  {assignedTo.length > 1 && (
+                    <div className="mt-2">
+                      <Form.Check
+                        type="switch"
+                        id="per-member-toggle"
+                        label="Separate quest per kid (each person gets their own card)"
+                        checked={perMember}
+                        onChange={(e) => setPerMember(e.target.checked)}
+                      />
+                    </div>
+                  )}
+                  <small style={{ color: 'var(--rt-ink-dim)', display: 'block', marginTop: 6 }}>
+                    {perMember && assignedTo.length > 1
+                      ? `Each scheduled day, ${assignedTo.length} copies will appear — one per kid.`
+                      : 'A copy of this quest will appear on each scheduled day, ready to complete.'}
+                  </small>
+                </>
+              )}
+            </Form.Group>
+          )}
 
           <Form.Group className="mb-2">
             <Form.Label>Sub-Steps</Form.Label>
