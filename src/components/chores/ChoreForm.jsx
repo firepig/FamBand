@@ -8,6 +8,7 @@ import {
   InputGroup,
   Alert,
   Badge,
+  ButtonGroup,
 } from 'react-bootstrap';
 import { FaPlus, FaTimes, FaImage } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
@@ -28,7 +29,7 @@ const FREQ_OPTIONS = [
 ];
 const DOW_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
-export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) {
+export default function ChoreForm({ show, onHide, editChore, defaultAssignee, defaultUpForGrabs = false }) {
   const { members, currentMember, isParent, refresh, notify } = useContext(AppContext);
   const isEditing = !!editChore;
   const children = members.filter((m) => m.role === 'child');
@@ -62,6 +63,11 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   const [startDow, setStartDow] = useState(0);
   const [firstMember, setFirstMember] = useState(null); // who goes first (new rotations)
   const [dutyNow, setDutyNow] = useState(null); // who is on duty now (existing rotations)
+  // Up for grabs: nobody is assigned and any player can take it.
+  const [upForGrabs, setUpForGrabs] = useState(false);
+  const [tplGrabs, setTplGrabs] = useState(null); // the series' own setting, once loaded
+  // Status of the card being edited (the quick toggle for phones, where dragging is awkward).
+  const [status, setStatus] = useState('todo');
   // Series cards have two step lists: the card's own, and the series'. Keep each separate.
   const checklistStore = useRef({ single: [], series: null });
   // The card's values when the form opened, so a series save sends only what was changed.
@@ -97,6 +103,9 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       const existingIds = existing.map((a) => (typeof a === 'object' ? a.id : a));
       setAssignedTo(existingIds);
       setInstAssignees(existingIds);
+      setUpForGrabs(existingIds.length === 0);
+      setTplGrabs(null);
+      setStatus(editChore.status || 'todo');
       setCategory(editChore.category || 'Chore');
       setDueDate(editChore.dueDate || editChore.due_date
         ? String(editChore.dueDate || editChore.due_date).split('T')[0]
@@ -114,6 +123,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
         points: editChore.points ?? 10,
         category: editChore.category || 'Chore',
         image: editChore.image || null,
+        status: editChore.status || 'todo',
       };
     } else {
       // Sensible defaults for new chore
@@ -127,6 +137,10 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
         // Single child family: auto-assign
         initialAssignee = [children[0].id];
       }
+      if (defaultUpForGrabs && isParent) initialAssignee = [];
+      setUpForGrabs(!!defaultUpForGrabs && isParent);
+      setTplGrabs(null);
+      setStatus('todo');
       setTitle('');
       setDescription('');
       setImage(null);
@@ -147,7 +161,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     }
     setValidated(false);
     setError(null);
-  }, [show, editChore, defaultAssignee]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [show, editChore, defaultAssignee, defaultUpForGrabs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When editing a card that belongs to a series, load the series' schedule.
   useEffect(() => {
@@ -163,6 +177,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       setSeriesStart(t.start_date ? String(t.start_date).split('T')[0] : '');
       const ids = (t.assignments || []).map((a) => a.id);
       setTplAssignees(ids);
+      setTplGrabs(!!t.up_for_grabs);
       const rot = t.rotation || {};
       setRotateOn(!!rot.enabled);
       setEveryWeeks(rot.everyWeeks || 1);
@@ -172,6 +187,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       checklistStore.current.series = seriesSteps;
       if (scopeRef.current === 'series') {
         setAssignedTo(ids);
+        setUpForGrabs(!!t.up_for_grabs);
         setChecklist(seriesSteps);
       }
       setTplReady(true);
@@ -192,6 +208,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     setChecklist(checklistStore.current[next] ?? checklist);
     // The series is for the template's players; a single card is just its own.
     setAssignedTo(next === 'series' ? (tplAssignees ?? instAssignees) : instAssignees);
+    setUpForGrabs(next === 'series' ? (tplGrabs ?? instAssignees.length === 0) : instAssignees.length === 0);
   };
 
   const editingSeries = isEditing && !!templateId && scope === 'series';
@@ -211,6 +228,10 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     startDow: Number(startDow) || 0,
     ...(includeFirst ? { firstMemberId: rotationFirst } : {}),
   });
+  const toggleGrabs = (on) => {
+    setUpForGrabs(on);
+    if (on) { setAssignedTo([]); setRotateOn(false); }
+  };
   const moveMember = (index, dir) => {
     setAssignedTo((prev) => {
       const next = [...prev];
@@ -274,8 +295,8 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     if (editingSeries && !tplReady) return; // schedule still loading
 
     if (!title.trim()) return;
-    if (assignedTo.length === 0) {
-      setError('Please assign this quest to at least one player.');
+    if (assignedTo.length === 0 && !upForGrabs) {
+      setError('Please assign this quest to at least one player, or mark it up for grabs.');
       return;
     }
     if (!currentMember?.id) {
@@ -321,6 +342,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           daysOfWeek: (frequency === 'weekly' || frequency === 'custom') ? daysOfWeek : [],
           startDate: seriesStart || null,
           perMember,
+          upForGrabs,
           rotation: rotationActive ? rotationBody(!dutyNow) : { enabled: false },
         });
         notify?.(repeating ? 'Series updated!' : 'Quest no longer repeats', 'success');
@@ -334,6 +356,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           dueDate: dueDate || null,
           createdBy: currentMember.id,
           checklist: cleanChecklist,
+          ...(isParent && status !== initialRef.current.status ? { status } : {}),
           ...imageField,
         });
         if (!templateId && isParent && frequency !== 'once') {
@@ -385,6 +408,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           startDate: dueDate || null,
           active: true,
           perMember,
+          ...(upForGrabs ? { upForGrabs: true } : {}),
           ...(rotationActive ? { rotation: rotationBody(true) } : {}),
           ...imageField,
         });
@@ -436,6 +460,25 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
               {scope === 'series' && (
                 <Form.Text className="text-muted">
                   Name, points, picture and players update today's open quests too. Sub-step changes start with the next one.
+                </Form.Text>
+              )}
+            </Form.Group>
+          )}
+
+          {isEditing && isParent && !editingSeries && (
+            <Form.Group className="mb-3">
+              <Form.Label>Status</Form.Label>
+              <ButtonGroup className="w-100">
+                {[['todo', 'TO DO'], ['in_progress', 'IN PROGRESS'], ['done', 'DONE']].map(([s, label]) => (
+                  <Button key={s} type="button" variant={status === s ? 'warning' : 'outline-secondary'}
+                    onClick={() => setStatus(s)}>
+                    {label}
+                  </Button>
+                ))}
+              </ButtonGroup>
+              {status === 'done' && initialRef.current.status !== 'done' && (
+                <Form.Text className="text-muted">
+                  Marking it done sends the points to the assigned players for approval.
                 </Form.Text>
               )}
             </Form.Group>
@@ -523,9 +566,19 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
             <Form.Label>
               Assign To {!isParent && <span style={{ color: 'var(--rt-ink-dim)' }}>(you can only assign quests to yourself)</span>}
             </Form.Label>
+            {isParent && (
+              <Form.Check
+                type="switch"
+                id="grabs-toggle"
+                className="mb-2"
+                label="Up for grabs: nobody assigned, any player can take it"
+                checked={upForGrabs}
+                onChange={(e) => toggleGrabs(e.target.checked)}
+              />
+            )}
             <Row className="g-2">
               {members.map((member) => {
-                const disabledForKid = !isParent && currentMember && member.id !== currentMember.id;
+                const disabledForKid = (!isParent && currentMember && member.id !== currentMember.id) || upForGrabs;
                 return (
                   <Col xs={6} sm={4} key={member.id}>
                     <Form.Check
@@ -543,13 +596,13 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
                       checked={assignedTo.includes(member.id)}
                       onChange={() => handleMemberToggle(member.id)}
                       disabled={disabledForKid}
-                      isInvalid={validated && assignedTo.length === 0}
+                      isInvalid={validated && !upForGrabs && assignedTo.length === 0}
                     />
                   </Col>
                 );
               })}
             </Row>
-            {validated && assignedTo.length === 0 && (
+            {validated && !upForGrabs && assignedTo.length === 0 && (
               <div className="text-danger small mt-1">Assign to at least one player.</div>
             )}
           </Form.Group>
