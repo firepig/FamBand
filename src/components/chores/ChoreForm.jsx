@@ -11,7 +11,8 @@ import {
 import { FaPlus, FaTimes, FaImage } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import { createChore, updateChore, createTemplate, uploadQuestImage } from '../../api';
-import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload, uploadUrl } from '../../utils/images';
+import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload, uploadUrl, validateImageFile, isCroppable } from '../../utils/images';
+import ImageCropModal from '../common/ImageCropModal';
 import Avatar from '../common/Avatar';
 
 const QUICK_POINTS = [5, 10, 20, 50];
@@ -44,6 +45,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   const [submitting, setSubmitting] = useState(false);
   const [image, setImage] = useState(null); // stored filename from /api/uploads/quest
   const [imageBusy, setImageBusy] = useState(false);
+  const [cropFile, setCropFile] = useState(null);
   const imageInputRef = useRef(null);
   const [error, setError] = useState(null);
 
@@ -120,6 +122,15 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     e.target.value = '';
     if (!picked) return;
     setError(null);
+    if (isCroppable(picked)) {
+      if (validateImageFile({ type: picked.type, size: 0 }, 1)) { setError('Use a JPEG, PNG, GIF or WebP image'); return; }
+      setCropFile(picked);
+    } else {
+      await uploadQuestPicked(picked);
+    }
+  };
+
+  const uploadQuestPicked = async (picked) => {
     setImageBusy(true);
     try {
       const { file, error: problem } = await prepareImageForUpload(picked, 'quest');
@@ -225,6 +236,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   };
 
   return (
+    <>
     <Modal show={show} onHide={onHide} size="lg" centered backdrop="static">
       <Modal.Header closeButton>
         <Modal.Title>{isEditing ? 'EDIT QUEST' : 'NEW QUEST'}</Modal.Title>
@@ -283,7 +295,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
                   </Button>
                 )}
               </div>
-              <Form.Text className="text-muted">JPEG, PNG, GIF or WebP. Large pictures are shrunk automatically.</Form.Text>
+              <Form.Text className="text-muted">JPEG, PNG, GIF or WebP. You can crop it before saving.</Form.Text>
             </Form.Group>
           )}
 
@@ -460,5 +472,9 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
         </Modal.Footer>
       </Form>
     </Modal>
+    <ImageCropModal file={cropFile} aspect={16 / 9} outputWidth={1600} title="Adjust quest picture"
+      onCancel={() => setCropFile(null)}
+      onConfirm={(cropped) => { setCropFile(null); uploadQuestPicked(cropped); }} />
+    </>
   );
 }

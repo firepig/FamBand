@@ -12,6 +12,7 @@ export default function Avatar({ avatar, size = '1em', className = '', style }) 
         className={className}
         style={{
           width: size, height: size, borderRadius: '50%', objectFit: 'cover',
+          border: '2px solid #fff', boxSizing: 'border-box',
           verticalAlign: 'middle', display: 'inline-block', ...style,
         }}
       />

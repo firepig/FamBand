@@ -53,6 +53,18 @@ function canvasToBlob(canvas, type, quality) {
   return new Promise((resolve) => canvas.toBlob(resolve, type, quality))
 }
 
+// Encodes a canvas for upload. JPEG stays JPEG; everything else prefers WebP
+// (keeps transparency). Browsers that can't encode WebP (Safari) silently hand
+// back PNG, which is fine.
+export async function canvasToFile(canvas, sourceType, sourceName) {
+  const wanted = sourceType === 'image/jpeg' ? 'image/jpeg' : 'image/webp'
+  const blob = await canvasToBlob(canvas, wanted, 0.85)
+  if (!blob) throw new Error('Could not process that image')
+  const ext = { 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/png': 'png' }[blob.type] || 'jpg'
+  const base = (sourceName || 'image').replace(/\.[^.]+$/, '')
+  return new File([blob], `${base}.${ext}`, { type: blob.type })
+}
+
 // Shrinks an image in the browser when it is larger than `kind` allows, either
 // in pixels or bytes. Small images are returned untouched (no recompression).
 // Animated GIFs are never touched, since a canvas would flatten them.
@@ -72,14 +84,7 @@ async function downscale(file, maxDim) {
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
   bitmap.close?.()
 
-  // Keep JPEG as JPEG. Everything else prefers WebP (keeps transparency); browsers
-  // that cannot encode WebP (Safari) silently give PNG back, which is fine.
-  const wanted = file.type === 'image/jpeg' ? 'image/jpeg' : 'image/webp'
-  const blob = await canvasToBlob(canvas, wanted, 0.85)
-  if (!blob) throw new Error('Could not process that image')
-  const ext = { 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/png': 'png' }[blob.type] || 'jpg'
-  const base = (file.name || 'image').replace(/\.[^.]+$/, '')
-  return new File([blob], `${base}.${ext}`, { type: blob.type })
+  return canvasToFile(canvas, file.type, file.name)
 }
 
 // Validate, then resize if needed. Resolves to { file } ready to upload, or { error }.
@@ -106,4 +111,37 @@ export async function prepareImageForUpload(file, kind) {
   }
   const problem = validateImageFile(out, maxMB)
   return problem ? { error: problem } : { file: out }
+}
+
+// Crops `file` to `area` ({x, y, width, height} in source pixels, as reported by
+// react-easy-crop) and scales the result to at most `maxWidth` pixels wide.
+export async function cropImageFile(file, area, maxWidth) {
+  const url = URL.createObjectURL(file)
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image()
+      el.onload = () => resolve(el)
+      el.onerror = () => reject(new Error('Could not read that image'))
+      el.src = url
+    })
+    const outW = Math.max(1, Math.round(Math.min(maxWidth, area.width)))
+    const outH = Math.max(1, Math.round(outW * (area.height / area.width)))
+    const canvas = document.createElement('canvas')
+    canvas.width = outW
+    canvas.height = outH
+    const ctx = canvas.getContext('2d')
+    if (file.type === 'image/jpeg') {
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(0, 0, outW, outH)
+    }
+    ctx.drawImage(img, area.x, area.y, area.width, area.height, 0, 0, outW, outH)
+    return await canvasToFile(canvas, file.type, file.name)
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
+// Animated GIFs can't be cropped on a canvas without flattening them.
+export function isCroppable(file) {
+  return file.type !== 'image/gif'
 }

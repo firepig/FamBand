@@ -4,8 +4,9 @@ import { FaUpload } from 'react-icons/fa'
 import AppContext from '../../context/AppContext'
 import { updateMember, uploadAvatar } from '../../api'
 import { AVATARS, COLORS } from '../../utils/memberOptions'
-import { ACCEPTED_IMAGE_TYPES, MAX_MB, prepareImageForUpload, isImageAvatar } from '../../utils/images'
+import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload, isImageAvatar, validateImageFile, isCroppable } from '../../utils/images'
 import Avatar from '../common/Avatar'
+import ImageCropModal from '../common/ImageCropModal'
 
 // Edit one member's name, color and avatar (emoji or uploaded image).
 // `canRename` is false when a non-parent edits themselves (server enforces it too).
@@ -17,6 +18,7 @@ export default function MemberEditor({ member, canRename, onSaved }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [cropFile, setCropFile] = useState(null)
   const fileRef = useRef(null)
 
   const afterChange = async (updated) => {
@@ -29,6 +31,16 @@ export default function MemberEditor({ member, canRename, onSaved }) {
     e.target.value = ''
     if (!picked) return
     setError('')
+    if (isCroppable(picked)) {
+      // Only check the type here; size is handled after cropping shrinks it.
+      if (validateImageFile({ type: picked.type, size: 0 }, 1)) { setError('Use a JPEG, PNG, GIF or WebP image'); return }
+      setCropFile(picked)
+    } else {
+      await uploadPicked(picked)
+    }
+  }
+
+  const uploadPicked = async (picked) => {
     setUploading(true)
     try {
       const { file, error: problem } = await prepareImageForUpload(picked, 'avatar')
@@ -89,7 +101,7 @@ export default function MemberEditor({ member, canRename, onSaved }) {
               onClick={() => fileRef.current?.click()}>
               {uploading ? <Spinner animation="border" size="sm" /> : <><FaUpload className="me-1" />Upload picture</>}
             </Button>
-            <div className="small text-muted mt-1">JPEG, PNG, GIF or WebP. Large pictures are shrunk automatically.</div>
+            <div className="small text-muted mt-1">JPEG, PNG, GIF or WebP. You can crop it before saving.</div>
           </div>
         </div>
         <div className="small text-muted mb-1">…or pick an emoji:</div>
@@ -119,6 +131,10 @@ export default function MemberEditor({ member, canRename, onSaved }) {
       <Button type="submit" disabled={busy || uploading}>
         {busy ? <Spinner animation="border" size="sm" /> : 'Save changes'}
       </Button>
+
+      <ImageCropModal file={cropFile} aspect={1} round outputWidth={512} title="Adjust avatar"
+        onCancel={() => setCropFile(null)}
+        onConfirm={(cropped) => { setCropFile(null); uploadPicked(cropped) }} />
     </Form>
   )
 }
