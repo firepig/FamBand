@@ -91,7 +91,7 @@ app.use('/api/snacks', requireUser, snacksRouter);
 app.use('/api/stats', requireUser, statsRouter);
 
 if (IS_PROD) {
-  app.get('*', (req, res) => {
+  app.get('/{*splat}', (req, res) => {
     res.sendFile(path.resolve(__dirname, '..', 'dist', 'index.html'));
   });
 }

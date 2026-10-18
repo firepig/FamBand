@@ -56,7 +56,7 @@ export default function PhotoUpload({ currentPhoto, onUpload }) {
           }}
         >
           <img
-            src={`/photos/${currentPhoto}`}
+            src={`${import.meta.env.BASE_URL}photos/${currentPhoto}`}
             alt="Chore proof"
             style={{
               width: '100%',

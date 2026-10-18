@@ -1,4 +1,4 @@
-const BASE_URL = ''
+const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, '')
 
 async function apiFetch(url, options = {}) {
   const res = await fetch(`${BASE_URL}${url}`, {
