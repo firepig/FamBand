@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDb } from '../db.js';
 import { materializeChores } from '../lib/materialize.js';
 import { getOccurrences, normalizeDays, toDateKey } from '../lib/recurrence.js';
+import { choreHasProgress } from '../lib/progress.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
 import { imageUpload, deleteUpload, uploadExists, releaseQuestImage } from '../lib/uploads.js';
 
@@ -111,12 +112,12 @@ router.patch('/:id', requireActiveMember, (req, res) => {
       .get(req.params.id, req.familyId);
     if (!chore) return res.status(404).json({ error: 'Chore not found' });
 
-    const { title, description, points, status, dueDate, category, assignedTo, image } = req.body;
+    const { title, description, points, status, dueDate, category, assignedTo, image, checklist } = req.body;
     const isParent = req.currentMember.role === 'parent';
     const touchesParentOnly =
       title !== undefined || description !== undefined || points !== undefined ||
       dueDate !== undefined || category !== undefined || assignedTo !== undefined ||
-      image !== undefined;
+      image !== undefined || checklist !== undefined;
     if (touchesParentOnly && !isParent) {
       return res.status(403).json({ error: 'Parent access required for these fields' });
     }
@@ -139,6 +140,27 @@ router.patch('/:id', requireActiveMember, (req, res) => {
       if (updateFields.length > 0) {
         updateValues.push(req.params.id);
         db.prepare(`UPDATE chores SET ${updateFields.join(', ')} WHERE id = ?`).run(...updateValues);
+      }
+      if (Array.isArray(checklist)) {
+        // Replace the step list but keep each existing step's id (and so its
+        // completed flag); steps the client dropped are removed.
+        const existingIds = db.prepare('SELECT id FROM checklist_items WHERE chore_id = ?')
+          .all(req.params.id).map((r) => r.id);
+        const kept = new Set();
+        const upd = db.prepare('UPDATE checklist_items SET text = ? WHERE id = ? AND chore_id = ?');
+        const ins = db.prepare('INSERT INTO checklist_items (id, chore_id, text) VALUES (?, ?, ?)');
+        for (const item of checklist) {
+          const text = String(item?.text ?? '').trim();
+          if (!text) continue;
+          if (item.id && existingIds.includes(item.id) && !kept.has(item.id)) {
+            upd.run(text, item.id, req.params.id);
+            kept.add(item.id);
+          } else {
+            ins.run(uuidv4(), req.params.id, text);
+          }
+        }
+        const del = db.prepare('DELETE FROM checklist_items WHERE id = ?');
+        for (const oldId of existingIds) if (!kept.has(oldId)) del.run(oldId);
       }
       if (Array.isArray(assignedTo)) {
         db.prepare('DELETE FROM chore_assignments WHERE chore_id = ?').run(req.params.id);
@@ -277,9 +299,7 @@ router.post('/:id/make-repeating', requireActiveMember, requireParent, (req, res
       .all(chore.id).map((r) => r.member_id);
     const steps = db.prepare('SELECT text FROM checklist_items WHERE chore_id = ? ORDER BY rowid ASC').all(chore.id);
 
-    const started = chore.status !== 'todo' || !!chore.photo_proof
-      || !!db.prepare('SELECT 1 FROM checklist_items WHERE chore_id = ? AND completed = 1 LIMIT 1').get(chore.id)
-      || !!db.prepare('SELECT 1 FROM points_ledger WHERE chore_id = ? LIMIT 1').get(chore.id);
+    const started = choreHasProgress(db, chore);
 
     // One assignee: per-member and shared are the same thing, so use per-member.
     let perMemberFinal = assigned.length > 1 ? !!perMember : true;
@@ -378,6 +398,11 @@ router.post('/:id/duplicate', requireActiveMember, requireParent, (req, res) => 
       const tpl = db.prepare('SELECT * FROM chore_templates WHERE id = ? AND family_id = ?')
         .get(src.template_id, req.familyId);
       if (tpl) {
+        // A stopped series (frequency 'once' / inactive) never generates quests, so
+        // cloning it would "succeed" and produce nothing.
+        if (tpl.frequency === 'once' || !tpl.active) {
+          return res.status(400).json({ error: 'That repeating quest has ended, so it can\'t be repeated. Use "Just this once" to copy it.' });
+        }
         const tplId = uuidv4();
         db.transaction(() => {
           db.prepare(

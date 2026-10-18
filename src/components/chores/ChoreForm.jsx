@@ -53,6 +53,11 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   const [instAssignees, setInstAssignees] = useState([]);
   const [tplAssignees, setTplAssignees] = useState(null);
   const [tplReady, setTplReady] = useState(true); // false while a series' schedule is loading
+  const [tplFailed, setTplFailed] = useState(false);
+  // Series cards have two step lists: the card's own, and the series'. Keep each separate.
+  const checklistStore = useRef({ single: [], series: null });
+  // The card's values when the form opened, so a series save sends only what was changed.
+  const initialRef = useRef({});
   const [cropFile, setCropFile] = useState(null);
   const imageInputRef = useRef(null);
   const [error, setError] = useState(null);
@@ -73,6 +78,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       setSeriesStart('');
       setTplAssignees(null);
       setTplReady(!(editChore.template_id || editChore.templateId));
+      setTplFailed(false);
       setPoints(editChore.points ?? 10);
       const existing = editChore.assignments || editChore.assignedTo || [];
       const existingIds = existing.map((a) => (typeof a === 'object' ? a.id : a));
@@ -82,13 +88,20 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       setDueDate(editChore.dueDate || editChore.due_date
         ? String(editChore.dueDate || editChore.due_date).split('T')[0]
         : '');
-      setChecklist(
-        (editChore.checklist || []).map((item) => ({
-          id: item.id,
-          text: item.text,
-          completed: !!item.completed,
-        }))
-      );
+      const ownChecklist = (editChore.checklist || []).map((item) => ({
+        id: item.id,
+        text: item.text,
+        completed: !!item.completed,
+      }));
+      setChecklist(ownChecklist);
+      checklistStore.current = { single: ownChecklist, series: null };
+      initialRef.current = {
+        title: editChore.title || '',
+        description: editChore.description || '',
+        points: editChore.points ?? 10,
+        category: editChore.category || 'Chore',
+        image: editChore.image || null,
+      };
     } else {
       // Sensible defaults for new chore
       let initialAssignee = [];
@@ -132,20 +145,28 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       setSeriesStart(t.start_date ? String(t.start_date).split('T')[0] : '');
       const ids = (t.assignments || []).map((a) => a.id);
       setTplAssignees(ids);
-      if (scopeRef.current === 'series') setAssignedTo(ids);
+      const seriesSteps = (t.checklist || []).map((s) => ({ id: s.id, text: s.text, completed: false }));
+      checklistStore.current.series = seriesSteps;
+      if (scopeRef.current === 'series') {
+        setAssignedTo(ids);
+        setChecklist(seriesSteps);
+      }
       setTplReady(true);
     }).catch(() => {
       if (cancelled) return;
+      // Without the schedule we can't safely edit the series: stay on "just this quest".
       scopeRef.current = 'single';
       setScope('single');
-      setTplReady(true);
+      setTplFailed(true);
     });
     return () => { cancelled = true; };
   }, [show, editChore]);
 
   const changeScope = (next) => {
+    checklistStore.current[scopeRef.current] = checklist;
     scopeRef.current = next;
     setScope(next);
+    setChecklist(checklistStore.current[next] ?? checklist);
     // The series is for the template's players; a single card is just its own.
     setAssignedTo(next === 'series' ? (tplAssignees ?? instAssignees) : instAssignees);
   };
@@ -235,18 +256,24 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       if (isEditing && editingSeries) {
         // Edit the whole repeating series (also refreshes its open cards).
         const repeating = frequency !== 'once';
+        // Name/points/etc. are the card's values, which may differ from the series'
+        // (after a "just this quest" edit), so only send what was actually changed.
+        const init = initialRef.current;
+        const changed = {};
+        if (title.trim() !== String(init.title ?? '').trim()) changed.title = title.trim();
+        if (description.trim() !== String(init.description ?? '').trim()) changed.description = description.trim();
+        if ((Number(points) || 0) !== init.points) changed.points = Number(points) || 0;
+        if (category !== init.category) changed.category = category;
+        if (isParent && image !== init.image) changed.image = image;
         await updateTemplate(templateId, {
-          title: title.trim(),
-          description: description.trim(),
-          points: Number(points) || 0,
+          ...changed,
+          // Players, steps and schedule come from the loaded series, so they are safe to send.
           assignedTo,
-          category,
           checklist: cleanChecklist.map((i) => ({ text: i.text })),
           frequency,
           daysOfWeek: (frequency === 'weekly' || frequency === 'custom') ? daysOfWeek : [],
           startDate: seriesStart || null,
           perMember,
-          ...imageField,
         });
         notify?.(repeating ? 'Series updated!' : 'Quest no longer repeats', 'success');
       } else if (isEditing) {
@@ -343,10 +370,16 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
               <Form.Label>Apply changes to</Form.Label>
               <Form.Check type="radio" id="scope-series" name="edit-scope"
                 label="This quest and all future ones (the whole repeating series)"
+                disabled={tplFailed}
                 checked={scope === 'series'} onChange={() => changeScope('series')} />
               <Form.Check type="radio" id="scope-single" name="edit-scope"
                 label="Just this quest"
                 checked={scope === 'single'} onChange={() => changeScope('single')} />
+              {tplFailed && (
+                <Form.Text className="text-danger d-block">
+                  Couldn't load this series' schedule, so only this quest can be edited right now. Close and reopen to retry.
+                </Form.Text>
+              )}
               {scope === 'series' && (
                 <Form.Text className="text-muted">
                   Name, points, picture and players update today's open quests too. Sub-step changes start with the next one.
