@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Spinner } from 'react-bootstrap';
 import { FaStar, FaClock, FaSyncAlt, FaHandPaper, FaCheck, FaExpand, FaUserFriends } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
-import { fetchChores } from '../../api';
+import { fetchChores, fetchMembers, fetchStats } from '../../api';
+import { MemberStrip } from '../gamification/PointsBar';
 import Avatar from '../common/Avatar';
 
 const COLUMNS = [
@@ -97,12 +98,17 @@ export default function Billboard() {
   const { family, currentMember } = useContext(AppContext);
   const navigate = useNavigate();
   const [chores, setChores] = useState(null);
+  const [members, setMembers] = useState([]);
+  const [pointsMap, setPointsMap] = useState({});
   const [error, setError] = useState('');
   const [now, setNow] = useState(() => new Date());
 
   const load = useCallback(async () => {
     try {
-      setChores(await fetchChores());
+      const [choreList, memberList, stats] = await Promise.all([fetchChores(), fetchMembers(), fetchStats()]);
+      setChores(choreList);
+      setMembers(memberList);
+      setPointsMap(Object.fromEntries((stats?.pointsByMember || []).map((p) => [p.id, p.balance])));
       setError('');
     } catch (err) {
       setError(err?.status === 401 ? 'Signed out. Sign in again to keep the board up to date.' : 'Can\'t reach the server. Retrying...');
@@ -171,6 +177,10 @@ export default function Billboard() {
       </div>
 
       {error && <div className="alert alert-warning py-2">{error}</div>}
+
+      {members.length > 0 && (
+        <MemberStrip members={members} chores={chores} pointsMap={pointsMap} large />
+      )}
 
       {chores === null ? (
         <div className="text-center py-5"><Spinner animation="border" variant="warning" /></div>

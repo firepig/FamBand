@@ -28,23 +28,6 @@ function getAssigneeIds(chore) {
 export default function PointsBar() {
   const { members, chores, stats, loading, switchMember } = useContext(AppContext);
 
-  // Daily progress: chores due today (or any todo/in_progress with no due) per member
-  const dailyProgress = useMemo(() => {
-    const map = {};
-    members.forEach((m) => { map[m.id] = { done: 0, total: 0 }; });
-    (chores || []).forEach((chore) => {
-      if (chore.status === 'failed') return;
-      const due = chore.dueDate || chore.due_date;
-      if (!due || !isToday(due)) return;
-      const ids = getAssigneeIds(chore);
-      ids.forEach((id) => {
-        if (!map[id]) return;
-        map[id].total += 1;
-        if (chore.status === 'done') map[id].done += 1;
-      });
-    });
-    return map;
-  }, [chores, members]);
   const [pointsMap, setPointsMap] = useState({});
   const [loadingPoints, setLoadingPoints] = useState(true);
 
@@ -69,6 +52,37 @@ export default function PointsBar() {
 
   if (loading || members.length === 0) return null;
 
+  return (
+    <MemberStrip
+      members={members}
+      chores={chores}
+      pointsMap={pointsMap}
+      loadingPoints={loadingPoints}
+      onSelect={(m) => switchMember(m.id)}
+    />
+  );
+}
+
+// The per-player progress strip. Display only: pass onSelect to make the tiles clickable.
+// `large` is for the wall billboard.
+export function MemberStrip({ members, chores, pointsMap, loadingPoints = false, onSelect, large = false }) {
+  // Daily progress: chores due today (or any todo/in_progress with no due) per member
+  const dailyProgress = useMemo(() => {
+    const map = {};
+    members.forEach((m) => { map[m.id] = { done: 0, total: 0 }; });
+    (chores || []).forEach((chore) => {
+      if (chore.status === 'failed') return;
+      const due = chore.dueDate || chore.due_date;
+      if (!due || !isToday(due)) return;
+      const ids = getAssigneeIds(chore);
+      ids.forEach((id) => {
+        if (!map[id]) return;
+        map[id].total += 1;
+        if (chore.status === 'done') map[id].done += 1;
+      });
+    });
+    return map;
+  }, [chores, members]);
   // Compact horizontal strip — kids first, then parents
   const ordered = [...members].sort((a, b) => {
     if (a.role === b.role) return 0;
@@ -84,7 +98,7 @@ export default function PointsBar() {
         border: '2px solid var(--rt-border)',
         boxShadow: '3px 3px 0 0 var(--rt-border-dark)',
       }}
-      title="Click a player to switch"
+      title={onSelect ? 'Click a player to switch' : undefined}
     >
       {loadingPoints && <Spinner animation="border" size="sm" variant="warning" />}
       {ordered.map((m) => {
@@ -94,29 +108,29 @@ export default function PointsBar() {
           <button
             key={m.id}
             type="button"
-            onClick={() => switchMember(m.id)}
+            onClick={onSelect ? () => onSelect(m) : undefined}
             style={{
               all: 'unset',
-              cursor: 'pointer',
+              cursor: onSelect ? 'pointer' : 'default',
               display: 'inline-grid',
               gridTemplateColumns: 'auto 1fr auto',
               alignItems: 'center',
               columnGap: 8,
               padding: '4px 10px',
-              minWidth: 200,
+              minWidth: large ? 320 : 200,
               border: `2px solid ${isParent ? 'var(--rt-ink-muted)' : (m.color || 'var(--rt-accent)')}`,
               background: 'var(--rt-panel)',
               fontFamily: 'var(--rt-font-display)',
-              fontSize: '0.6rem',
+              fontSize: large ? '0.95rem' : '0.6rem',
               lineHeight: 1,
               color: 'var(--rt-ink)',
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--rt-bg-3)'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--rt-panel)'; }}
+            onMouseEnter={onSelect ? (e) => { e.currentTarget.style.background = 'var(--rt-bg-3)'; } : undefined}
+            onMouseLeave={onSelect ? (e) => { e.currentTarget.style.background = 'var(--rt-panel)'; } : undefined}
           >
-            <span style={{ fontSize: '1rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <Avatar avatar={m.avatar} />
-              <span style={{ fontSize: '0.6rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontSize: large ? '2.2rem' : '1rem', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Avatar avatar={m.avatar} size={large ? '48px' : '1em'} />
+              <span style={{ fontSize: large ? '0.95rem' : '0.6rem', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 {m.name}
                 {isParent && <FaCrown size={9} style={{ color: 'var(--rt-accent)' }} />}
               </span>
@@ -131,7 +145,7 @@ export default function PointsBar() {
                   title={dp.total === 0 ? 'No chores today' : `Today: ${dp.done}/${dp.total} (${Math.round(pct)}%)`}
                   style={{
                     position: 'relative',
-                    height: 10,
+                    height: large ? 18 : 10,
                     background: 'var(--rt-bg-3)',
                     border: '1px solid var(--rt-border-dark)',
                     boxShadow: 'inset 1px 1px 0 rgba(0,0,0,0.4)',
@@ -159,13 +173,13 @@ export default function PointsBar() {
 
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, justifySelf: 'end' }}>
               <span style={{ color: 'var(--rt-accent)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                <FaStar size={9} /> {pts}
+                <FaStar size={large ? 14 : 9} /> {pts}
               </span>
               {(() => {
                 const dp = dailyProgress[m.id] || { done: 0, total: 0 };
                 if (dp.total === 0) return null;
                 return (
-                  <span style={{ color: 'var(--rt-ink-dim)', fontSize: '0.55rem' }}>
+                  <span style={{ color: 'var(--rt-ink-dim)', fontSize: large ? '0.85rem' : '0.55rem' }}>
                     {dp.done}/{dp.total}
                   </span>
                 );
