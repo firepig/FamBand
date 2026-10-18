@@ -83,8 +83,8 @@ const pinUpdateSchema = z.object({
 });
 
 // PATCH /:id/pin — change a member's PIN
-// Rules: parent can change any member's PIN in their family;
-// non-parent (kid) can only change their own PIN and must supply currentPin.
+// Rules: a parent can reset any other member's PIN in their family without knowing the old one.
+// Changing your own PIN (kid or parent) always requires your current PIN.
 router.patch('/:id/pin', requireActiveMember, async (req, res, next) => {
   try {
     const { pin, currentPin } = pinUpdateSchema.parse(req.body);
@@ -96,7 +96,7 @@ router.patch('/:id/pin', requireActiveMember, async (req, res, next) => {
     const isParent = req.currentMember.role === 'parent';
     const isSelf = req.currentMember.id === target.id;
     if (!isParent && !isSelf) return res.status(403).json({ error: 'Not allowed' });
-    if (!isParent) {
+    if (!isParent || isSelf) {
       if (!currentPin || !target.pin_hash || !(await bcrypt.compare(currentPin, target.pin_hash))) {
         return res.status(401).json({ error: 'Current PIN incorrect' });
       }

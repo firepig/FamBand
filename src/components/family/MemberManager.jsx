@@ -1,4 +1,5 @@
 import { useContext, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Container, Card, Row, Col, Button, Modal, Form, Alert, Badge } from 'react-bootstrap'
 import AppContext from '../../context/AppContext'
 import { createMember, deleteMember, updateMemberPin, fetchMembers } from '../../api'
@@ -8,6 +9,7 @@ import { AVATARS, COLORS } from '../../utils/memberOptions';
 
 export default function MemberManager() {
   const { user, currentMember, notify } = useContext(AppContext)
+  const navigate = useNavigate()
   const [members, setMembers] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
@@ -74,9 +76,16 @@ export default function MemberManager() {
                     <Button size="sm" variant="outline-secondary" onClick={() => setEditTarget(m)}>
                       Edit
                     </Button>
-                    <Button size="sm" variant="outline-primary" onClick={() => setPinTarget(m)}>
-                      Reset PIN
-                    </Button>
+                    {isSelf ? (
+                      <Button size="sm" variant="outline-primary" as="a" href={`${import.meta.env.BASE_URL}profile`}
+                        onClick={(e) => { e.preventDefault(); navigate('/profile') }}>
+                        Change my PIN
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="outline-primary" onClick={() => setPinTarget(m)}>
+                        Reset PIN
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="outline-danger"
@@ -258,12 +267,12 @@ function ResetPinModal({ target, onHide, onDone }) {
           <Form.Group className="mb-3">
             <Form.Label>New PIN</Form.Label>
             <Form.Control type="password" inputMode="numeric" value={pin} autoFocus
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} required maxLength={6} />
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} required minLength={4} maxLength={6} />
           </Form.Group>
           <Form.Group>
             <Form.Label>Confirm PIN</Form.Label>
             <Form.Control type="password" inputMode="numeric" value={confirmPin}
-              onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))} required maxLength={6} />
+              onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))} required minLength={4} maxLength={6} />
           </Form.Group>
         </Modal.Body>
         <Modal.Footer>

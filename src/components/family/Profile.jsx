@@ -3,6 +3,7 @@ import { Container, Card, Row, Col } from 'react-bootstrap'
 import AppContext from '../../context/AppContext'
 import MemberEditor from './MemberEditor'
 import ChangePasswordForm from './ChangePasswordForm'
+import ChangePinForm from './ChangePinForm'
 
 export default function Profile() {
   const { currentMember, isParent, user, family } = useContext(AppContext)
@@ -19,6 +20,12 @@ export default function Profile() {
               {/* key remounts the form with fresh values after a save/refresh */}
               <MemberEditor key={`${currentMember.id}:${currentMember.avatar}:${currentMember.color}:${currentMember.name}`}
                 member={currentMember} canRename={isParent} />
+            </Card.Body>
+          </Card>
+          <Card className="mt-4">
+            <Card.Header>My PIN</Card.Header>
+            <Card.Body>
+              <ChangePinForm memberId={currentMember.id} />
             </Card.Body>
           </Card>
         </Col>
