@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getDb } from '../db.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
 import { uploadExists, releaseQuestImage } from '../lib/uploads.js';
+import { normalizeDays, toDateKey } from '../lib/recurrence.js';
 
 const router = Router();
 
@@ -21,16 +22,6 @@ function loadTemplate(db, id, familyId) {
     'SELECT * FROM chore_template_checklist WHERE template_id = ? ORDER BY order_index ASC, rowid ASC'
   ).all(id);
   return { ...t, assignments, checklist };
-}
-
-function normalizeDays(input) {
-  if (input == null) return '';
-  if (Array.isArray(input)) {
-    return input.map((n) => Number(n))
-      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6)
-      .join(',');
-  }
-  return String(input);
 }
 
 function memberBelongsToFamily(db, memberId, familyId) {
@@ -157,6 +148,27 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
         });
       }
     })();
+
+    // Keep already-spawned, still-open quests in step with the series. Done/failed
+    // history is left alone. Ending the repeat detaches the open ones so they
+    // become ordinary one-off quests.
+    const openInstances = "template_id = ? AND status IN ('todo','in_progress') AND (occurrence_date IS NULL OR occurrence_date >= ?)";
+    const todayKey = toDateKey(new Date());
+    if (frequency === 'once') {
+      db.prepare(`UPDATE chores SET template_id = NULL, occurrence_date = NULL, instance_member_id = NULL WHERE ${openInstances}`)
+        .run(req.params.id, todayKey);
+    } else {
+      const sets = [];
+      const vals = [];
+      for (const [col, val] of Object.entries({ title, description, points, category, image })) {
+        if (val === undefined) continue;
+        sets.push(`${col} = ?`);
+        vals.push(col === 'image' ? (val || null) : val);
+      }
+      if (sets.length) {
+        db.prepare(`UPDATE chores SET ${sets.join(', ')} WHERE ${openInstances}`).run(...vals, req.params.id, todayKey);
+      }
+    }
 
     if (image !== undefined && existing.image && existing.image !== image) releaseQuestImage(db, existing.image);
 

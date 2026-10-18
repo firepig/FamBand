@@ -10,7 +10,7 @@ import {
 } from 'react-bootstrap';
 import { FaPlus, FaTimes, FaImage } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
-import { createChore, updateChore, createTemplate, uploadQuestImage } from '../../api';
+import { createChore, updateChore, createTemplate, updateTemplate, fetchTemplate, makeChoreRepeating, uploadQuestImage } from '../../api';
 import { ACCEPTED_IMAGE_TYPES, prepareImageForUpload, uploadUrl, validateImageType, isCroppable } from '../../utils/images';
 import ImageCropModal from '../common/ImageCropModal';
 import Avatar from '../common/Avatar';
@@ -45,6 +45,14 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   const [submitting, setSubmitting] = useState(false);
   const [image, setImage] = useState(null); // stored filename from /api/uploads/quest
   const [imageBusy, setImageBusy] = useState(false);
+  // Editing a quest that came from a repeating series: change just this card, or the series.
+  const [templateId, setTemplateId] = useState(null);
+  const [scope, setScope] = useState('series'); // 'series' | 'single'
+  const scopeRef = useRef('series');
+  const [seriesStart, setSeriesStart] = useState('');
+  const [instAssignees, setInstAssignees] = useState([]);
+  const [tplAssignees, setTplAssignees] = useState(null);
+  const [tplReady, setTplReady] = useState(true); // false while a series' schedule is loading
   const [cropFile, setCropFile] = useState(null);
   const imageInputRef = useRef(null);
   const [error, setError] = useState(null);
@@ -56,9 +64,20 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       setTitle(editChore.title || '');
       setDescription(editChore.description || '');
       setImage(editChore.image || null);
+      setTemplateId(editChore.template_id || editChore.templateId || null);
+      scopeRef.current = 'series';
+      setScope('series');
+      setFrequency('once');
+      setDaysOfWeek([]);
+      setPerMember(true);
+      setSeriesStart('');
+      setTplAssignees(null);
+      setTplReady(!(editChore.template_id || editChore.templateId));
       setPoints(editChore.points ?? 10);
       const existing = editChore.assignments || editChore.assignedTo || [];
-      setAssignedTo(existing.map((a) => (typeof a === 'object' ? a.id : a)));
+      const existingIds = existing.map((a) => (typeof a === 'object' ? a.id : a));
+      setAssignedTo(existingIds);
+      setInstAssignees(existingIds);
       setCategory(editChore.category || 'Chore');
       setDueDate(editChore.dueDate || editChore.due_date
         ? String(editChore.dueDate || editChore.due_date).split('T')[0]
@@ -85,6 +104,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       setTitle('');
       setDescription('');
       setImage(null);
+      setTemplateId(null);
       setPoints(10);
       setAssignedTo(initialAssignee);
       setCategory('Chore');
@@ -97,6 +117,41 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     setValidated(false);
     setError(null);
   }, [show, editChore, defaultAssignee]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When editing a card that belongs to a series, load the series' schedule.
+  useEffect(() => {
+    if (!show || !editChore) return undefined;
+    const tid = editChore.template_id || editChore.templateId;
+    if (!tid) return undefined;
+    let cancelled = false;
+    fetchTemplate(tid).then((t) => {
+      if (cancelled) return;
+      setFrequency(t.frequency || 'daily');
+      setDaysOfWeek(String(t.days_of_week || '').split(',').filter(Boolean).map(Number));
+      setPerMember(!!t.per_member);
+      setSeriesStart(t.start_date ? String(t.start_date).split('T')[0] : '');
+      const ids = (t.assignments || []).map((a) => a.id);
+      setTplAssignees(ids);
+      if (scopeRef.current === 'series') setAssignedTo(ids);
+      setTplReady(true);
+    }).catch(() => {
+      if (cancelled) return;
+      scopeRef.current = 'single';
+      setScope('single');
+      setTplReady(true);
+    });
+    return () => { cancelled = true; };
+  }, [show, editChore]);
+
+  const changeScope = (next) => {
+    scopeRef.current = next;
+    setScope(next);
+    // The series is for the template's players; a single card is just its own.
+    setAssignedTo(next === 'series' ? (tplAssignees ?? instAssignees) : instAssignees);
+  };
+
+  const editingSeries = isEditing && !!templateId && scope === 'series';
+  const repeatControls = !isEditing || (isParent && (!templateId || scope === 'series'));
 
   const handleMemberToggle = (memberId) => {
     setAssignedTo((prev) =>
@@ -148,6 +203,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setValidated(true);
+    if (editingSeries && !tplReady) return; // schedule still loading
 
     if (!title.trim()) return;
     if (assignedTo.length === 0) {
@@ -160,7 +216,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     }
 
     // Validate days for weekly/custom
-    if ((frequency === 'weekly' || frequency === 'custom') && daysOfWeek.length === 0) {
+    if (repeatControls && (frequency === 'weekly' || frequency === 'custom') && daysOfWeek.length === 0) {
       setError('Pick at least one day of the week for the repeat schedule.');
       return;
     }
@@ -176,8 +232,24 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     setError(null);
 
     try {
-      if (isEditing) {
-        // Editing an existing instance — don't change its recurrence here.
+      if (isEditing && editingSeries) {
+        // Edit the whole repeating series (also refreshes its open cards).
+        const repeating = frequency !== 'once';
+        await updateTemplate(templateId, {
+          title: title.trim(),
+          description: description.trim(),
+          points: Number(points) || 0,
+          assignedTo,
+          category,
+          checklist: cleanChecklist.map((i) => ({ text: i.text })),
+          frequency,
+          daysOfWeek: (frequency === 'weekly' || frequency === 'custom') ? daysOfWeek : [],
+          startDate: seriesStart || null,
+          perMember,
+          ...imageField,
+        });
+        notify?.(repeating ? 'Series updated!' : 'Quest no longer repeats', 'success');
+      } else if (isEditing) {
         await updateChore(editChore.id, {
           title: title.trim(),
           description: description.trim(),
@@ -189,7 +261,23 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           checklist: cleanChecklist,
           ...imageField,
         });
-        notify?.('Quest updated!', 'success');
+        if (!templateId && isParent && frequency !== 'once') {
+          // Turn this one-off quest into a repeating one.
+          const res = await makeChoreRepeating(editChore.id, {
+            frequency,
+            daysOfWeek: (frequency === 'weekly' || frequency === 'custom') ? daysOfWeek : [],
+            startDate: dueDate || null,
+            perMember,
+          });
+          notify?.(
+            res.perMemberOverridden
+              ? 'Quest now repeats. It was already started, so it stays one shared quest.'
+              : 'Quest now repeats!',
+            'success'
+          );
+        } else {
+          notify?.('Quest updated!', 'success');
+        }
       } else if (frequency === 'once') {
         await createChore({
           title: title.trim(),
@@ -248,6 +336,23 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
             <Alert variant="danger" dismissible onClose={() => setError(null)}>
               {error}
             </Alert>
+          )}
+
+          {isEditing && isParent && templateId && (
+            <Form.Group className="mb-3">
+              <Form.Label>Apply changes to</Form.Label>
+              <Form.Check type="radio" id="scope-series" name="edit-scope"
+                label="This quest and all future ones (the whole repeating series)"
+                checked={scope === 'series'} onChange={() => changeScope('series')} />
+              <Form.Check type="radio" id="scope-single" name="edit-scope"
+                label="Just this quest"
+                checked={scope === 'single'} onChange={() => changeScope('single')} />
+              {scope === 'series' && (
+                <Form.Text className="text-muted">
+                  Name, points, picture and players update today's open quests too. Sub-step changes start with the next one.
+                </Form.Text>
+              )}
+            </Form.Group>
           )}
 
           <Form.Group className="mb-3">
@@ -370,17 +475,19 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
                 {CATEGORIES.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
               </Form.Select>
             </Col>
-            <Col sm={6}>
-              <Form.Label>{frequency === 'once' ? 'Due Date' : 'Starts On (optional)'}</Form.Label>
-              <Form.Control
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-              />
-            </Col>
+            {!editingSeries && (
+              <Col sm={6}>
+                <Form.Label>{frequency === 'once' ? 'Due Date' : 'Starts On (optional)'}</Form.Label>
+                <Form.Control
+                  type="date"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                />
+              </Col>
+            )}
           </Row>
 
-          {!isEditing && (
+          {repeatControls && (
             <Form.Group className="mb-3">
               <Form.Label>Repeats</Form.Label>
               <Form.Select value={frequency} onChange={(e) => setFrequency(e.target.value)}>
@@ -415,6 +522,17 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
                     );
                   })}
                 </div>
+              )}
+              {editingSeries && frequency !== 'once' && (
+                <div className="mt-2" style={{ maxWidth: 240 }}>
+                  <Form.Label className="small mb-1">Starts on (optional)</Form.Label>
+                  <Form.Control type="date" value={seriesStart} onChange={(e) => setSeriesStart(e.target.value)} />
+                </div>
+              )}
+              {editingSeries && frequency === 'once' && (
+                <small style={{ color: 'var(--rt-ink-dim)', display: 'block', marginTop: 6 }}>
+                  This will stop the series. Open quests become ordinary one-off quests; finished ones stay in your history.
+                </small>
               )}
               {frequency !== 'once' && (
                 <>
@@ -467,7 +585,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           <Button type="button" variant="secondary" onClick={onHide} disabled={submitting}>
             Cancel
           </Button>
-          <Button type="submit" variant="success" disabled={submitting}>
+          <Button type="submit" variant="success" disabled={submitting || (editingSeries && !tplReady)}>
             {submitting ? 'Saving...' : isEditing ? 'Update' : 'Create'}
           </Button>
         </Modal.Footer>

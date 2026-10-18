@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getDb } from '../db.js';
 import { materializeChores } from '../lib/materialize.js';
+import { getOccurrences, normalizeDays, toDateKey } from '../lib/recurrence.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
 import { imageUpload, deleteUpload, uploadExists, releaseQuestImage } from '../lib/uploads.js';
 
@@ -251,6 +252,86 @@ router.post('/:id/photo', requireActiveMember, requireChoreForPhoto, imageUpload
   }
 });
 
+// POST /:id/make-repeating — turn a one-off quest into a repeating one (parent only).
+// Creates a template from the quest. If today is a scheduled day, the quest itself
+// becomes today's occurrence so nothing is duplicated; otherwise it stays a one-off
+// and the series starts on the next scheduled day.
+const REPEAT_FREQ = new Set(['daily', 'weekdays', 'weekly', 'custom']);
+
+router.post('/:id/make-repeating', requireActiveMember, requireParent, (req, res) => {
+  try {
+    const db = getDb();
+    const chore = db.prepare('SELECT * FROM chores WHERE id = ? AND family_id = ?')
+      .get(req.params.id, req.familyId);
+    if (!chore) return res.status(404).json({ error: 'Chore not found' });
+    if (chore.template_id) return res.status(400).json({ error: 'This quest already repeats' });
+
+    const { frequency, daysOfWeek, interval = 1, startDate = null, endDate = null, perMember = true } = req.body || {};
+    if (!REPEAT_FREQ.has(frequency)) return res.status(400).json({ error: 'Invalid frequency' });
+    const days = normalizeDays(daysOfWeek);
+    if ((frequency === 'weekly' || frequency === 'custom') && !days) {
+      return res.status(400).json({ error: 'Pick at least one day of the week' });
+    }
+
+    const assigned = db.prepare('SELECT member_id FROM chore_assignments WHERE chore_id = ?')
+      .all(chore.id).map((r) => r.member_id);
+    const steps = db.prepare('SELECT text FROM checklist_items WHERE chore_id = ? ORDER BY rowid ASC').all(chore.id);
+
+    const started = chore.status !== 'todo' || !!chore.photo_proof
+      || !!db.prepare('SELECT 1 FROM checklist_items WHERE chore_id = ? AND completed = 1 LIMIT 1').get(chore.id)
+      || !!db.prepare('SELECT 1 FROM points_ledger WHERE chore_id = ? LIMIT 1').get(chore.id);
+
+    // One assignee: per-member and shared are the same thing, so use per-member.
+    let perMemberFinal = assigned.length > 1 ? !!perMember : true;
+
+    const today = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+    const todayKey = toDateKey(today);
+    const runsToday = getOccurrences(
+      { active: 1, frequency, days_of_week: days, interval, start_date: startDate, end_date: endDate },
+      today, today
+    ).length > 0;
+
+    // A shared card can't stand in for several per-player cards. If it hasn't been
+    // started, replace it with per-player cards; if it has, keep it and share the series.
+    let removeOriginal = false;
+    let perMemberOverridden = false;
+    if (runsToday && assigned.length > 1 && perMemberFinal) {
+      if (started) { perMemberFinal = false; perMemberOverridden = true; } else { removeOriginal = true; }
+    }
+
+    const tplId = uuidv4();
+    db.transaction(() => {
+      db.prepare(
+        `INSERT INTO chore_templates
+          (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member, image)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+      ).run(
+        tplId, req.familyId, chore.title, chore.description || '', chore.points, chore.category || 'Chore',
+        req.currentMember.id, frequency, days, interval, startDate, endDate, perMemberFinal ? 1 : 0, chore.image || null
+      );
+      const insAssign = db.prepare('INSERT INTO chore_template_assignments (template_id, member_id) VALUES (?, ?)');
+      assigned.forEach((mid) => insAssign.run(tplId, mid));
+      const insStep = db.prepare('INSERT INTO chore_template_checklist (id, template_id, text, order_index) VALUES (?, ?, ?, ?)');
+      steps.forEach((st, idx) => { if (st.text) insStep.run(uuidv4(), tplId, st.text, idx); });
+
+      if (runsToday) {
+        if (removeOriginal) {
+          db.prepare('DELETE FROM chores WHERE id = ?').run(chore.id);
+        } else {
+          db.prepare('UPDATE chores SET template_id = ?, occurrence_date = ?, instance_member_id = ? WHERE id = ?')
+            .run(tplId, todayKey, perMemberFinal ? (assigned[0] ?? null) : null, chore.id);
+        }
+      }
+    })();
+
+    materializeChores(db, req.familyId);
+    res.status(201).json({ templateId: tplId, removedOriginal: removeOriginal, perMemberOverridden, adopted: runsToday && !removeOriginal });
+  } catch (err) {
+    console.error('Error making chore repeating:', err);
+    res.status(500).json({ error: 'Failed to make quest repeating' });
+  }
+});
+
 // POST /:id/approve — parent only; approving member derived from active member
 router.post('/:id/approve', requireActiveMember, requireParent, (req, res) => {
   try {
@@ -289,7 +370,39 @@ router.post('/:id/duplicate', requireActiveMember, requireParent, (req, res) => 
       .get(req.params.id, req.familyId);
     if (!src) return res.status(404).json({ error: 'Chore not found' });
 
-    const { dueDate } = req.body || {};
+    const { dueDate, repeat } = req.body || {};
+
+    // Duplicating a repeating quest can carry the schedule over: clone the whole
+    // template (schedule, assignees, steps, picture) as a new repeating quest.
+    if (repeat && src.template_id) {
+      const tpl = db.prepare('SELECT * FROM chore_templates WHERE id = ? AND family_id = ?')
+        .get(src.template_id, req.familyId);
+      if (tpl) {
+        const tplId = uuidv4();
+        db.transaction(() => {
+          db.prepare(
+            `INSERT INTO chore_templates
+              (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member, image)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            tplId, req.familyId, tpl.title, tpl.description || '', tpl.points, tpl.category,
+            req.currentMember.id, tpl.frequency, tpl.days_of_week || '', tpl.interval, tpl.start_date,
+            tpl.end_date, tpl.active, tpl.per_member, tpl.image || null
+          );
+          db.prepare('INSERT INTO chore_template_assignments (template_id, member_id) SELECT ?, member_id FROM chore_template_assignments WHERE template_id = ?')
+            .run(tplId, tpl.id);
+          const steps = db.prepare('SELECT text, order_index FROM chore_template_checklist WHERE template_id = ? ORDER BY order_index ASC, rowid ASC').all(tpl.id);
+          const insStep = db.prepare('INSERT INTO chore_template_checklist (id, template_id, text, order_index) VALUES (?, ?, ?, ?)');
+          steps.forEach((st) => insStep.run(uuidv4(), tplId, st.text, st.order_index));
+        })();
+        materializeChores(db, req.familyId);
+        const first = db.prepare('SELECT id FROM chores WHERE template_id = ? ORDER BY created_at ASC LIMIT 1').get(tplId);
+        return res.status(201).json(first
+          ? { ...getChoreWithRelations(db, first.id, req.familyId), templateId: tplId }
+          : { templateId: tplId });
+      }
+    }
+
     const newId = uuidv4();
 
     const insertChore = db.prepare(
