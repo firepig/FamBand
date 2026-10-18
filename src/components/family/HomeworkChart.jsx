@@ -5,6 +5,8 @@ import {
 import { FaBook, FaCheck, FaTimes, FaPlus, FaCalendarAlt, FaStar } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import { fetchHomework, createHomework, updateHomework } from '../../api';
+import Avatar from '../common/Avatar';
+import { avatarText } from '../../utils/images';
 
 const SUBJECT_COLORS = {
   Math:    'var(--rt-primary)',
@@ -240,7 +242,7 @@ export default function HomeworkChart() {
                         padding: 12,
                       }}>
                         <div className="d-flex align-items-center gap-2 mb-2">
-                          <span style={{ fontSize: '1.6rem' }}>{group.member.avatar || '👤'}</span>
+                          <span style={{ fontSize: '1.6rem' }}><Avatar avatar={group.member.avatar} /></span>
                           <span style={{
                             fontFamily: 'var(--rt-font-display)',
                             fontSize: '0.75rem',
@@ -328,7 +330,7 @@ export default function HomeworkChart() {
                       <tr key={child.id}>
                         <td>
                           <div className="d-flex align-items-center gap-1 justify-content-center">
-                            <span>{child.avatar || '👤'}</span>
+                            <span><Avatar avatar={child.avatar} /></span>
                             <span style={{ fontFamily: 'var(--rt-font-display)', fontSize: '0.65rem', color: child.color || 'var(--rt-accent)' }}>
                               {child.name}
                             </span>
@@ -410,7 +412,7 @@ export default function HomeworkChart() {
               <Form.Label>Child</Form.Label>
               <Form.Select value={formMember} onChange={(e) => setFormMember(e.target.value)} disabled={submitting}>
                 <option value="">Select child...</option>
-                {children.map((c) => <option key={c.id} value={c.id}>{c.avatar} {c.name}</option>)}
+                {children.map((c) => <option key={c.id} value={c.id}>{avatarText(c.avatar)} {c.name}</option>)}
               </Form.Select>
             </Form.Group>
             <Form.Group className="mb-3">

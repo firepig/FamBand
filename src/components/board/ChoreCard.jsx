@@ -29,7 +29,9 @@ import {
 } from '../../api';
 import Checklist from '../chores/Checklist';
 import PhotoUpload from '../chores/PhotoUpload';
+import { uploadUrl } from '../../utils/images';
 import ChoreForm from '../chores/ChoreForm';
+import Avatar from '../common/Avatar';
 
 const CATEGORY_COLORS = {
   Chore:    'var(--rt-cat-chore)',
@@ -74,7 +76,7 @@ export default function ChoreCard({ chore }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const {
-    id, title, description, points, status,
+    id, title, description, points, status, image,
     checklist, dueDate, due_date,
     category, photoProof, photo_proof,
     pointsApproved, points_approved,
@@ -198,7 +200,7 @@ export default function ChoreCard({ chore }) {
           <div className="rt-chore__meta">
             {assignedMembers.slice(0, 4).map((m) => (
               <span key={m.id} className="rt-chore__avatar" title={m.name}>
-                {m.avatar || '👤'}
+                <Avatar avatar={m.avatar} />
               </span>
             ))}
             {assignedMembers.length > 4 && (
@@ -251,6 +253,10 @@ export default function ChoreCard({ chore }) {
           <Modal.Title>{title}</Modal.Title>
         </Modal.Header>
         <Modal.Body>
+          {image && (
+            <img src={uploadUrl('quests', image)} alt=""
+              style={{ width: '100%', maxHeight: 260, objectFit: 'cover', borderRadius: 8, marginBottom: 12 }} />
+          )}
           {description && <p style={{ color: 'var(--rt-ink-dim)' }}>{description}</p>}
 
           <div className="d-flex flex-wrap gap-2 mb-3">
@@ -280,7 +286,7 @@ export default function ChoreCard({ chore }) {
               <div className="d-flex gap-2 flex-wrap">
                 {assignedMembers.map((m) => (
                   <span key={m.id} className="rt-view-badge">
-                    {m.avatar || '👤'} {m.name}
+                    <Avatar avatar={m.avatar} /> {m.name}
                   </span>
                 ))}
               </div>

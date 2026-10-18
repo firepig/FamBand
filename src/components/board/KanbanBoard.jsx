@@ -12,6 +12,7 @@ import AppContext from '../../context/AppContext';
 import { updateChore } from '../../api';
 import Column from './Column';
 import ChoreForm from '../chores/ChoreForm';
+import Avatar from '../common/Avatar';
 
 const COLUMNS = [
   { status: 'todo',        title: 'TO DO',       cls: 'rt-column--todo' },
@@ -118,7 +119,7 @@ export default function KanbanBoard() {
           variant={filterMember === c.id ? 'warning' : 'secondary'}
           onClick={() => setFilterMember(c.id)}
         >
-          <span style={{ marginRight: 4 }}>{c.avatar || '👤'}</span>{c.name}
+          <span style={{ marginRight: 4 }}><Avatar avatar={c.avatar} /></span>{c.name}
         </Button>
       ))}
     </div>

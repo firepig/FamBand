@@ -49,6 +49,9 @@ export async function authClearActiveMember() {
 export async function authResetPassword(data) {
   return apiFetch('/api/auth/reset-password', { method: 'POST', body: JSON.stringify(data) })
 }
+export async function authChangePassword(data) {
+  return apiFetch('/api/auth/change-password', { method: 'POST', body: JSON.stringify(data) })
+}
 export async function authRegenerateRecoveryCodes() {
   return apiFetch('/api/auth/regenerate-recovery-codes', { method: 'POST' })
 }
@@ -60,6 +63,12 @@ export async function createMember(data) {
 }
 export async function deleteMember(id) {
   return apiFetch(`/api/members/${id}`, { method: 'DELETE' })
+}
+export async function updateMember(id, data) {
+  return apiFetch(`/api/members/${id}`, { method: 'PATCH', body: JSON.stringify(data) })
+}
+export async function uploadAvatar(id, file) {
+  return uploadFile(`/api/members/${id}/avatar`, 'avatar', file)
 }
 export async function updateMemberPin(id, data) {
   return apiFetch(`/api/members/${id}/pin`, { method: 'PATCH', body: JSON.stringify(data) })
@@ -85,21 +94,33 @@ export async function addChecklistItem(choreId, data) {
 export async function toggleChecklistItem(choreId, itemId) {
   return apiFetch(`/api/chores/${choreId}/checklist/${itemId}`, { method: 'PATCH' })
 }
-export async function uploadPhoto(choreId, file) {
+// Multipart upload (no JSON content-type; the browser sets the boundary).
+async function uploadFile(url, field, file) {
   const formData = new FormData()
-  formData.append('photo', file)
-  const res = await fetch(`${BASE_URL}/api/chores/${choreId}/photo`, {
+  formData.append(field, file)
+  const res = await fetch(`${BASE_URL}${url}`, {
     method: 'POST',
     credentials: 'include',
     body: formData,
+  }).catch((err) => {
+    if (err instanceof TypeError) throw new Error('Network error: unable to connect to server')
+    throw err
   })
-  const data = await res.json()
+  const text = await res.text()
+  let data = null
+  try { data = text ? JSON.parse(text) : null } catch { /* non-JSON error body */ }
   if (!res.ok) {
-    const err = new Error(data.error || data.message || res.statusText || 'Upload failed')
+    const err = new Error((data && (data.error || data.message)) || res.statusText || 'Upload failed')
     err.status = res.status
     throw err
   }
   return data
+}
+export async function uploadPhoto(choreId, file) {
+  return uploadFile(`/api/chores/${choreId}/photo`, 'photo', file)
+}
+export async function uploadQuestImage(file) {
+  return uploadFile('/api/uploads/quest', 'image', file)
 }
 export async function duplicateChore(choreId, data = {}) {
   return apiFetch(`/api/chores/${choreId}/duplicate`, { method: 'POST', body: JSON.stringify(data) })

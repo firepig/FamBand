@@ -1,16 +1,25 @@
 import { useState, useRef } from 'react';
 import { Button, Spinner } from 'react-bootstrap';
 import { FaCamera, FaUpload, FaTimes } from 'react-icons/fa';
+import { ACCEPTED_IMAGE_TYPES, MAX_MB, validateImageFile } from '../../utils/images';
 
 export default function PhotoUpload({ currentPhoto, onUpload }) {
   const [preview, setPreview] = useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
 
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const problem = validateImageFile(file, MAX_MB.photo);
+    if (problem) {
+      setError(problem);
+      e.target.value = '';
+      return;
+    }
+    setError(null);
     setSelectedFile(file);
     const reader = new FileReader();
     reader.onloadend = () => {
@@ -46,6 +55,7 @@ export default function PhotoUpload({ currentPhoto, onUpload }) {
   if (currentPhoto && !preview) {
     return (
       <div className="d-flex flex-column align-items-center gap-2">
+        {error && <div className="text-danger small">{error}</div>}
         <div
           style={{
             width: '100%',
@@ -76,7 +86,7 @@ export default function PhotoUpload({ currentPhoto, onUpload }) {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept={ACCEPTED_IMAGE_TYPES}
           onChange={handleFileSelect}
           style={{ display: 'none' }}
         />
@@ -104,6 +114,7 @@ export default function PhotoUpload({ currentPhoto, onUpload }) {
 
   return (
     <div className="d-flex flex-column align-items-center gap-2">
+      {error && <div className="text-danger small">{error}</div>}
       {preview ? (
         <>
           <div
@@ -177,7 +188,7 @@ export default function PhotoUpload({ currentPhoto, onUpload }) {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept={ACCEPTED_IMAGE_TYPES}
             onChange={handleFileSelect}
             style={{ display: 'none' }}
           />

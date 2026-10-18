@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext } from 'react';
+import { useState, useEffect, useContext, useRef } from 'react';
 import {
   Modal,
   Form,
@@ -8,9 +8,11 @@ import {
   InputGroup,
   Alert,
 } from 'react-bootstrap';
-import { FaPlus, FaTimes } from 'react-icons/fa';
+import { FaPlus, FaTimes, FaImage } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
-import { createChore, updateChore, createTemplate } from '../../api';
+import { createChore, updateChore, createTemplate, uploadQuestImage } from '../../api';
+import { ACCEPTED_IMAGE_TYPES, MAX_MB, validateImageFile, uploadUrl } from '../../utils/images';
+import Avatar from '../common/Avatar';
 
 const QUICK_POINTS = [5, 10, 20, 50];
 const CATEGORIES = ['Chore', 'Homework', 'Outdoor', 'Kitchen', 'Other'];
@@ -40,6 +42,9 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   const [perMember, setPerMember] = useState(true);
   const [validated, setValidated] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [image, setImage] = useState(null); // stored filename from /api/uploads/quest
+  const [imageBusy, setImageBusy] = useState(false);
+  const imageInputRef = useRef(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
@@ -48,6 +53,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
     if (editChore) {
       setTitle(editChore.title || '');
       setDescription(editChore.description || '');
+      setImage(editChore.image || null);
       setPoints(editChore.points ?? 10);
       const existing = editChore.assignments || editChore.assignedTo || [];
       setAssignedTo(existing.map((a) => (typeof a === 'object' ? a.id : a)));
@@ -76,6 +82,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       }
       setTitle('');
       setDescription('');
+      setImage(null);
       setPoints(10);
       setAssignedTo(initialAssignee);
       setCategory('Chore');
@@ -108,6 +115,24 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
   const handleStepText = (id, text) =>
     setChecklist((p) => p.map((i) => (i.id === id ? { ...i, text } : i)));
 
+  const handleImageFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const problem = validateImageFile(file, MAX_MB.quest);
+    if (problem) { setError(problem); return; }
+    setError(null);
+    setImageBusy(true);
+    try {
+      const res = await uploadQuestImage(file);
+      setImage(res.image);
+    } catch (err) {
+      setError(err.message || 'Image upload failed');
+    } finally {
+      setImageBusy(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setValidated(true);
@@ -132,6 +157,9 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
       .filter((i) => i.text.trim() !== '')
       .map((i) => ({ ...i, text: i.text.trim() }));
 
+    // Only parents can attach images (the upload endpoint is parent-only).
+    const imageField = isParent ? { image } : {};
+
     setSubmitting(true);
     setError(null);
 
@@ -147,6 +175,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           dueDate: dueDate || null,
           createdBy: currentMember.id,
           checklist: cleanChecklist,
+          ...imageField,
         });
         notify?.('Quest updated!', 'success');
       } else if (frequency === 'once') {
@@ -159,6 +188,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           dueDate: dueDate || null,
           createdBy: currentMember.id,
           checklist: cleanChecklist,
+          ...imageField,
         });
         notify?.('New quest added!', 'success');
       } else {
@@ -176,6 +206,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
           startDate: dueDate || null,
           active: true,
           perMember,
+          ...imageField,
         });
         notify?.('Repeating quest set up!', 'success');
       }
@@ -231,6 +262,31 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
             />
           </Form.Group>
 
+          {isParent && (
+            <Form.Group className="mb-3">
+              <Form.Label>Picture <small className="text-muted">(optional)</small></Form.Label>
+              <div className="d-flex align-items-center gap-3 flex-wrap">
+                {image && (
+                  <img src={uploadUrl('quests', image)} alt="Quest"
+                    style={{ maxHeight: 96, maxWidth: 160, borderRadius: 6, border: '1px solid #dee2e6' }} />
+                )}
+                <input ref={imageInputRef} type="file" accept={ACCEPTED_IMAGE_TYPES}
+                  onChange={handleImageFile} style={{ display: 'none' }} />
+                <Button type="button" variant="outline-secondary" size="sm" disabled={imageBusy}
+                  onClick={() => imageInputRef.current?.click()}>
+                  <FaImage className="me-1" />
+                  {imageBusy ? 'Uploading…' : image ? 'Replace picture' : 'Add picture'}
+                </Button>
+                {image && !imageBusy && (
+                  <Button type="button" variant="outline-danger" size="sm" onClick={() => setImage(null)}>
+                    <FaTimes className="me-1" />Remove
+                  </Button>
+                )}
+              </div>
+              <Form.Text className="text-muted">JPEG, PNG, GIF or WebP, up to {MAX_MB.quest} MB</Form.Text>
+            </Form.Group>
+          )}
+
           <Form.Group className="mb-3">
             <Form.Label>Reward (points)</Form.Label>
             <Row className="g-2 mb-2">
@@ -273,7 +329,7 @@ export default function ChoreForm({ show, onHide, editChore, defaultAssignee }) 
                       id={`assign-${member.id}`}
                       label={
                         <span className="d-inline-flex align-items-center gap-2">
-                          <span style={{ fontSize: '1.1rem' }}>{member.avatar || '👤'}</span>
+                          <span style={{ fontSize: '1.1rem' }}><Avatar avatar={member.avatar} /></span>
                           <span>{member.name}</span>
                           <small style={{ color: 'var(--rt-ink-dim)', fontSize: '0.7rem' }}>
                             ({member.role})

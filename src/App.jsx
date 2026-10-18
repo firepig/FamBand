@@ -18,6 +18,7 @@ import Register from './components/auth/Register'
 import ForgotPassword from './components/auth/ForgotPassword'
 import SelectMember from './components/auth/SelectMember'
 import MemberManager from './components/family/MemberManager'
+import Profile from './components/family/Profile'
 
 function StatsPage() {
   return (
@@ -89,6 +90,7 @@ function AppContent() {
           <Route path="/homework" element={<HomeworkChart />} />
           <Route path="/snacks" element={<SnackShop />} />
           <Route path="/stats" element={<StatsPage />} />
+          <Route path="/profile" element={<Profile />} />
           <Route path="/family" element={<RequireParent><MemberManager /></RequireParent>} />
         </Route>
 

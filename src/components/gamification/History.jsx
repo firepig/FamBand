@@ -2,6 +2,7 @@ import { useContext, useMemo, useState } from 'react';
 import { Card, Badge } from 'react-bootstrap';
 import { FaCheck, FaTimes, FaHistory } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
+import Avatar from '../common/Avatar';
 
 function parseLocalDate(value) {
   if (!value) return null;
@@ -135,7 +136,7 @@ export default function History() {
                       <span>{fmtDate(when)}</span>
                       {memberObjs.slice(0, 3).map((m) => (
                         <span key={m.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                          <span style={{ fontSize: '0.9rem' }}>{m.avatar || '👤'}</span>
+                          <span style={{ fontSize: '0.9rem' }}><Avatar avatar={m.avatar} /></span>
                           <span>{m.name}</span>
                         </span>
                       ))}

@@ -3,6 +3,8 @@ import { Link, useLocation } from 'react-router-dom';
 import { Navbar as BsNavbar, Nav, NavDropdown, Badge, Container, Spinner } from 'react-bootstrap';
 import { FaStar, FaUser, FaCrown, FaGamepad } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
+import { fetchPoints } from '../../api';
+import Avatar from '../common/Avatar';
 
 export default function Navbar() {
   const { members, currentMember, switchMember, logout, isParent } = useContext(AppContext);
@@ -14,8 +16,7 @@ export default function Navbar() {
     if (!currentMember) return;
     let cancelled = false;
     setPointsLoading(true);
-    fetch(`/api/points/${currentMember.id}`, { credentials: 'include' })
-      .then((r) => r.ok ? r.json() : Promise.reject())
+    fetchPoints(currentMember.id)
       .then((data) => {
         if (cancelled) return;
         setPoints(typeof data.points === 'number' ? data.points : data.total ?? 0);
@@ -92,7 +93,7 @@ export default function Navbar() {
                 <span className="d-inline-flex align-items-center" style={{ color: 'var(--rt-ink)' }}>
                   {currentMember ? (
                     <>
-                      <span className="me-1">{currentMember.avatar || '👤'}</span>
+                      <span className="me-1"><Avatar avatar={currentMember.avatar} /></span>
                       <span className="d-none d-lg-inline">{currentMember.name}</span>
                     </>
                   ) : <FaUser />}
@@ -109,6 +110,9 @@ export default function Navbar() {
                   <NavDropdown.Divider />
                 </>
               )}
+              <NavDropdown.Item as={Link} to="/profile">
+                Edit profile
+              </NavDropdown.Item>
               <NavDropdown.Item onClick={() => switchMember()}>
                 Switch player
               </NavDropdown.Item>
