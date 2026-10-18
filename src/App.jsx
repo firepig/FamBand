@@ -17,6 +17,7 @@ import Login from './components/auth/Login'
 import Register from './components/auth/Register'
 import ForgotPassword from './components/auth/ForgotPassword'
 import SelectMember from './components/auth/SelectMember'
+import MemberManager from './components/family/MemberManager'
 
 function StatsPage() {
   return (
@@ -51,6 +52,12 @@ function RequireActiveMember({ children }) {
   return children
 }
 
+function RequireParent({ children }) {
+  const { isParent } = useContext(AppContext)
+  if (!isParent) return <Navigate to="/" replace />
+  return children
+}
+
 function FullSpinner() {
   return (
     <div className="d-flex justify-content-center align-items-center" style={{ minHeight: '80vh' }}>
@@ -82,6 +89,7 @@ function AppContent() {
           <Route path="/homework" element={<HomeworkChart />} />
           <Route path="/snacks" element={<SnackShop />} />
           <Route path="/stats" element={<StatsPage />} />
+          <Route path="/family" element={<RequireParent><MemberManager /></RequireParent>} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

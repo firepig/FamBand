@@ -31,6 +31,7 @@ export default function Navbar() {
     { label: 'HOMEWORK', path: '/homework' },
     { label: 'SHOP', path: '/snacks' },
     { label: 'STATS', path: '/stats' },
+    ...(isParent ? [{ label: 'FAMILY', path: '/family' }] : []),
   ];
 
   return (
