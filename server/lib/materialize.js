@@ -111,8 +111,12 @@ export function materializeChores(db, familyId) {
       if (tpl.per_member) {
         // One instance per assignee
         for (const mid of assignments) {
+          // Covered if any of today's cards for this series (per-player OR shared,
+          // any status) already includes this player. Switching a series between
+          // shared and per-player mode must never double up a player's card.
           const exists = db.prepare(
-            'SELECT 1 FROM chores WHERE template_id = ? AND occurrence_date = ? AND instance_member_id = ?'
+            `SELECT 1 FROM chores c JOIN chore_assignments ca ON ca.chore_id = c.id
+              WHERE c.template_id = ? AND c.occurrence_date = ? AND ca.member_id = ? LIMIT 1`
           ).get(tpl.id, todayKey, mid);
           if (exists) continue;
           if (createInstance(tpl, [mid], mid)) inserted += 1;
@@ -120,7 +124,7 @@ export function materializeChores(db, familyId) {
       } else {
         // One shared instance for all assignees
         const exists = db.prepare(
-          'SELECT 1 FROM chores WHERE template_id = ? AND occurrence_date = ? AND instance_member_id IS NULL'
+          'SELECT 1 FROM chores WHERE template_id = ? AND occurrence_date = ? LIMIT 1'
         ).get(tpl.id, todayKey);
         if (exists) continue;
         if (createInstance(tpl, assignments, null)) inserted += 1;

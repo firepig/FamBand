@@ -4,6 +4,7 @@ import { getDb } from '../db.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
 import { uploadExists, releaseQuestImage } from '../lib/uploads.js';
 import { normalizeDays, toDateKey } from '../lib/recurrence.js';
+import { choreHasProgress } from '../lib/progress.js';
 
 const router = Router();
 
@@ -26,6 +27,35 @@ function loadTemplate(db, id, familyId) {
 
 function memberBelongsToFamily(db, memberId, familyId) {
   return !!db.prepare('SELECT 1 FROM family_members WHERE id = ? AND family_id = ?').get(memberId, familyId);
+}
+
+// After a series' players or shared/per-player layout change, line up its
+// untouched open cards with the new layout: reassign a shared card, and remove
+// cards that no longer fit so the next refresh regenerates the right ones.
+// Cards anyone has started or finished are never touched, and materializeChores
+// won't create a second card for a player who already has one today.
+function reconcileOpenCards(db, templateId, todayKey) {
+  const tpl = db.prepare('SELECT per_member FROM chore_templates WHERE id = ?').get(templateId);
+  const players = db.prepare('SELECT member_id FROM chore_template_assignments WHERE template_id = ?')
+    .all(templateId).map((r) => r.member_id);
+  const open = db.prepare(
+    `SELECT * FROM chores WHERE template_id = ? AND status = 'todo'
+       AND (occurrence_date IS NULL OR occurrence_date >= ?)`
+  ).all(templateId, todayKey);
+  const delCard = db.prepare('DELETE FROM chores WHERE id = ?');
+  const delAssign = db.prepare('DELETE FROM chore_assignments WHERE chore_id = ?');
+  const addAssign = db.prepare('INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)');
+  for (const card of open) {
+    if (choreHasProgress(db, card)) continue;
+    if (tpl.per_member) {
+      if (!card.instance_member_id || !players.includes(card.instance_member_id)) delCard.run(card.id);
+    } else if (card.instance_member_id) {
+      delCard.run(card.id); // a per-player card in a now-shared series
+    } else {
+      delAssign.run(card.id);
+      players.forEach((mid) => addAssign.run(card.id, mid));
+    }
+  }
 }
 
 router.get('/', (req, res) => {
@@ -154,20 +184,24 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
     // become ordinary one-off quests.
     const openInstances = "template_id = ? AND status IN ('todo','in_progress') AND (occurrence_date IS NULL OR occurrence_date >= ?)";
     const todayKey = toDateKey(new Date());
+    // Always carry the edited name/points/etc. onto open cards first, so that even
+    // when the series is ending they keep the values that were just saved.
+    const sets = [];
+    const vals = [];
+    for (const [col, val] of Object.entries({ title, description, points, category, image })) {
+      if (val === undefined) continue;
+      sets.push(`${col} = ?`);
+      vals.push(col === 'image' ? (val || null) : val);
+    }
+    if (sets.length) {
+      db.prepare(`UPDATE chores SET ${sets.join(', ')} WHERE ${openInstances}`).run(...vals, req.params.id, todayKey);
+    }
+
     if (frequency === 'once') {
       db.prepare(`UPDATE chores SET template_id = NULL, occurrence_date = NULL, instance_member_id = NULL WHERE ${openInstances}`)
         .run(req.params.id, todayKey);
-    } else {
-      const sets = [];
-      const vals = [];
-      for (const [col, val] of Object.entries({ title, description, points, category, image })) {
-        if (val === undefined) continue;
-        sets.push(`${col} = ?`);
-        vals.push(col === 'image' ? (val || null) : val);
-      }
-      if (sets.length) {
-        db.prepare(`UPDATE chores SET ${sets.join(', ')} WHERE ${openInstances}`).run(...vals, req.params.id, todayKey);
-      }
+    } else if (Array.isArray(assignedTo) || perMember !== undefined) {
+      reconcileOpenCards(db, req.params.id, todayKey);
     }
 
     if (image !== undefined && existing.image && existing.image !== image) releaseQuestImage(db, existing.image);
