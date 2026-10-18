@@ -33,9 +33,9 @@ router.get('/', (req, res) => {
     ).all(familyId);
 
     const recentActivity = db.prepare(
-      `SELECT pl.*, fm.name as member_name, fm.avatar as member_avatar
+      `SELECT pl.*, COALESCE(fm.name, 'Former member') as member_name, COALESCE(fm.avatar, '👤') as member_avatar
        FROM points_ledger pl
-       JOIN family_members fm ON pl.member_id = fm.id
+       LEFT JOIN family_members fm ON pl.member_id = fm.id
        WHERE pl.family_id = ?
        ORDER BY pl.created_at DESC
        LIMIT 20`
