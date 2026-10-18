@@ -46,7 +46,10 @@ export default function SelectMember() {
           <h1 className="rt-page-title">WHO'S PLAYING?</h1>
           <div className="text-muted small">{family?.name} · signed in as {user?.email}</div>
         </div>
-        <Button variant="outline-secondary" size="sm" onClick={logout}>Sign out</Button>
+        <div className="d-flex gap-2">
+          <Button variant="outline-warning" size="sm" onClick={() => navigate('/billboard')}>Billboard view</Button>
+          <Button variant="outline-secondary" size="sm" onClick={logout}>Sign out</Button>
+        </div>
       </div>
       <Row className="g-3">
         {members.length === 0 && (
