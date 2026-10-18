@@ -135,6 +135,12 @@ export async function rejectChore(choreId) {
 // --- Templates ---
 export async function fetchTemplates() { return apiFetch('/api/templates') }
 export async function fetchTemplate(id) { return apiFetch(`/api/templates/${id}`) }
+export async function createTemplateOverride(templateId, data) {
+  return apiFetch(`/api/templates/${templateId}/overrides`, { method: 'POST', body: JSON.stringify(data) })
+}
+export async function deleteTemplateOverride(templateId, periodStart) {
+  return apiFetch(`/api/templates/${templateId}/overrides/${periodStart}`, { method: 'DELETE' })
+}
 export async function makeChoreRepeating(choreId, data) {
   return apiFetch(`/api/chores/${choreId}/make-repeating`, { method: 'POST', body: JSON.stringify(data) })
 }

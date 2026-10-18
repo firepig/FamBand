@@ -136,3 +136,81 @@ export function getOccurrences(template, windowStart, windowEnd) {
 export function todayKey() {
   return toDateKey(new Date());
 }
+
+// ---------------------------------------------------------------------------
+// Rotation: who is "on duty" for a repeating quest whose players take turns.
+//
+// A turn lasts `everyWeeks` weeks and starts on weekday `startDow` (0=Sun). The
+// on-duty player is derived from the calendar, so missed days or not opening
+// the app can never skip or repeat a turn:
+//
+//   turnIndex = floor(daysBetween(anchorTurnStart, thisTurnStart) / (7 * everyWeeks))
+//   player    = order[(indexOf(anchorMember) + turnIndex) mod order.length]
+//
+// `overrides` (per turn, keyed by the turn's start date) let a parent swap in
+// someone else or skip the scheduled player (the next person in order takes it).
+// Overrides never shift later turns.
+// ---------------------------------------------------------------------------
+
+/** Start (local midnight) of the week-aligned period containing `date`. */
+export function periodStart(date, startDow = 0) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  return addDays(d, -((d.getDay() - startDow + 7) % 7));
+}
+
+/**
+ * cfg: { order: [memberId], anchorMember, anchorDate, everyWeeks, startDow,
+ *        overrides: [{ period_start, kind: 'swap'|'skip', member_id }] }
+ * Returns null before the rotation begins or with no players.
+ */
+export function getRotationTurn(cfg, date) {
+  const order = (cfg && cfg.order) || [];
+  if (order.length === 0) return null;
+  const every = Math.max(1, Number(cfg.everyWeeks) || 1);
+  const dow = Number.isInteger(Number(cfg.startDow)) ? Number(cfg.startDow) : 0;
+  const anchor = parseDateKey(cfg.anchorDate);
+  if (!anchor) return null;
+
+  const anchorStart = periodStart(anchor, dow);
+  const thisStart = periodStart(date, dow);
+  const days = daysBetween(anchorStart, thisStart);
+  if (days < 0) return null;
+
+  const turnIndex = Math.floor(days / (7 * every));
+  const turnStart = addDays(anchorStart, turnIndex * 7 * every);
+  const baseIdx = (Math.max(0, order.indexOf(cfg.anchorMember)) + turnIndex) % order.length;
+  const turnKey = toDateKey(turnStart);
+
+  let memberId = order[baseIdx];
+  const ov = (cfg.overrides || []).find((o) => o.period_start === turnKey);
+  if (ov) {
+    if (ov.kind === 'swap' && ov.member_id && order.includes(ov.member_id)) memberId = ov.member_id;
+    else if (ov.kind === 'skip') memberId = order[(baseIdx + 1) % order.length];
+  }
+
+  return {
+    memberId,
+    scheduledMemberId: order[baseIdx],
+    overridden: memberId !== order[baseIdx],
+    turnStart: turnKey,
+    turnEnd: toDateKey(addDays(turnStart, 7 * every - 1)),
+    nextStart: toDateKey(addDays(turnStart, 7 * every)),
+    nextMemberId: order[(baseIdx + 1) % order.length],
+  };
+}
+
+/** The next `count` turns starting with the one containing `date`. */
+export function getUpcomingTurns(cfg, date, count = 4) {
+  const first = getRotationTurn(cfg, date);
+  if (!first) return [];
+  const every = Math.max(1, Number(cfg.everyWeeks) || 1);
+  const out = [first];
+  let cursor = parseDateKey(first.turnStart);
+  while (out.length < count) {
+    cursor = addDays(cursor, 7 * every);
+    const turn = getRotationTurn(cfg, cursor);
+    if (!turn) break;
+    out.push(turn);
+  }
+  return out;
+}

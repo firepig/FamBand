@@ -135,6 +135,17 @@ export function initializeDb() {
       FOREIGN KEY (member_id) REFERENCES family_members(id)
     );
 
+    CREATE TABLE IF NOT EXISTS chore_template_overrides (
+      template_id TEXT NOT NULL,
+      period_start TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('swap','skip')),
+      member_id TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (template_id, period_start),
+      FOREIGN KEY (template_id) REFERENCES chore_templates(id) ON DELETE CASCADE,
+      FOREIGN KEY (member_id) REFERENCES family_members(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS chore_template_checklist (
       id TEXT PRIMARY KEY,
       template_id TEXT NOT NULL,
@@ -267,6 +278,14 @@ export function initializeDb() {
       `);
     })();
   }
+  // Rotating assignments: players take turns on a repeating quest.
+  addColumnIfMissing('chore_template_assignments', 'position', 'INTEGER');
+  db.exec('UPDATE chore_template_assignments SET position = rowid WHERE position IS NULL');
+  addColumnIfMissing('chore_templates', 'rotation_enabled', 'INTEGER DEFAULT 0');
+  addColumnIfMissing('chore_templates', 'rotation_every_weeks', 'INTEGER DEFAULT 1');
+  addColumnIfMissing('chore_templates', 'rotation_start_dow', 'INTEGER DEFAULT 0');
+  addColumnIfMissing('chore_templates', 'rotation_anchor_date', 'TEXT');
+  addColumnIfMissing('chore_templates', 'rotation_anchor_member', 'TEXT');
   addColumnIfMissing('chores', 'image', 'TEXT');
   addColumnIfMissing('chore_templates', 'image', 'TEXT');
 
