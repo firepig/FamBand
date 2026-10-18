@@ -41,7 +41,10 @@ function reconcileOpenCards(db, templateId, todayKey) {
   let players = db.prepare('SELECT member_id FROM chore_template_assignments WHERE template_id = ?')
     .all(templateId).map((r) => r.member_id);
   let perMember = !!tpl.per_member;
-  if (tpl.rotation_enabled) {
+  if (tpl.up_for_grabs) {
+    players = [];
+    perMember = false;
+  } else if (tpl.rotation_enabled) {
     // A rotating series has exactly one card per day: the on-duty player's.
     const turn = currentTurn(db, tpl);
     players = turn ? [turn.memberId] : [];
@@ -63,6 +66,7 @@ function reconcileOpenCards(db, templateId, todayKey) {
     } else {
       delAssign.run(card.id);
       players.forEach((mid) => addAssign.run(card.id, mid));
+      if (tpl.up_for_grabs) db.prepare('UPDATE chores SET bounty = 1 WHERE id = ?').run(card.id);
     }
   }
 }
@@ -97,7 +101,7 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
       frequency = 'daily', daysOfWeek, interval = 1,
       startDate = null, endDate = null,
       assignedTo = [], checklist = [], active = true,
-      perMember = true, image = null, rotation,
+      perMember = true, image = null, rotation, upForGrabs = false,
     } = req.body || {};
 
     if (!title) return res.status(400).json({ error: 'title is required' });
@@ -107,7 +111,8 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
     const db = getDb();
     const id = uuidv4();
     const days = normalizeDays(daysOfWeek);
-    const players = (assignedTo || []).filter((mid, i, a) => a.indexOf(mid) === i && memberBelongsToFamily(db, mid, req.familyId));
+    // Up for grabs: no assigned players; any player can take each day's card.
+    const players = upForGrabs ? [] : (assignedTo || []).filter((mid, i, a) => a.indexOf(mid) === i && memberBelongsToFamily(db, mid, req.familyId));
     const rot = parseRotation(rotation);
     if (rot?.enabled && (frequency === 'once' || players.length < 2)) {
       return res.status(400).json({ error: 'Rotation needs a repeating quest with at least two players' });
@@ -115,15 +120,15 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
 
     const insertTpl = db.prepare(
       `INSERT INTO chore_templates
-        (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member, image)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member, image, up_for_grabs)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertStep = db.prepare('INSERT INTO chore_template_checklist (id, template_id, text, order_index) VALUES (?, ?, ?, ?)');
 
     db.transaction(() => {
       insertTpl.run(
         id, req.familyId, title, description, points, category, req.currentMember.id,
-        frequency, days, interval, startDate, endDate, active ? 1 : 0, perMember ? 1 : 0, image || null
+        frequency, days, interval, startDate, endDate, active ? 1 : 0, perMember ? 1 : 0, image || null, upForGrabs ? 1 : 0
       );
       setOrder(db, id, players);
       (checklist || []).forEach((item, idx) => {
@@ -147,7 +152,7 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
     if (!existing) return res.status(404).json({ error: 'Template not found' });
 
     const { title, description, points, category, frequency, daysOfWeek,
-      interval, startDate, endDate, active, assignedTo, checklist, perMember, image, rotation } = req.body || {};
+      interval, startDate, endDate, active, assignedTo, checklist, perMember, image, rotation, upForGrabs } = req.body || {};
     if (image && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
 
     const today = new Date();
@@ -157,13 +162,14 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
       enabled: !!existing.rotation_enabled, every: existing.rotation_every_weeks, dow: existing.rotation_start_dow,
       turn: turnBefore, order: orderBefore,
     };
-    const players = Array.isArray(assignedTo)
+    const grabs = upForGrabs !== undefined ? !!upForGrabs : !!existing.up_for_grabs;
+    const players = grabs ? [] : Array.isArray(assignedTo)
       ? assignedTo.filter((mid, i, a) => a.indexOf(mid) === i && memberBelongsToFamily(db, mid, req.familyId))
       : orderBefore;
     const rot = parseRotation(rotation, {
       enabled: !!existing.rotation_enabled, everyWeeks: existing.rotation_every_weeks, startDow: existing.rotation_start_dow,
     });
-    const rotationOnAfter = rot ? rot.enabled : !!existing.rotation_enabled;
+    const rotationOnAfter = grabs ? false : (rot ? rot.enabled : !!existing.rotation_enabled);
     const freqAfter = frequency !== undefined ? frequency : existing.frequency;
     // Ending the repeat (frequency 'once') also ends the rotation, so only validate otherwise.
     if (rotationOnAfter && frequency !== 'once' && (freqAfter === 'once' || players.length < 2)) {
@@ -189,14 +195,17 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
     if (active !== undefined) push('active', active ? 1 : 0);
     if (perMember !== undefined) push('per_member', perMember ? 1 : 0);
     if (image !== undefined) push('image', image || null);
+    if (upForGrabs !== undefined) push('up_for_grabs', upForGrabs ? 1 : 0);
 
     db.transaction(() => {
       if (setCols.length) {
         setVals.push(req.params.id);
         db.prepare(`UPDATE chore_templates SET ${setCols.join(', ')} WHERE id = ?`).run(...setVals);
       }
-      if (Array.isArray(assignedTo)) setOrder(db, req.params.id, players);
-      if (frequency === 'once') {
+      if (Array.isArray(assignedTo) || upForGrabs !== undefined) setOrder(db, req.params.id, players);
+      if (grabs) {
+        db.prepare('UPDATE chore_templates SET rotation_enabled = 0 WHERE id = ?').run(req.params.id);
+      } else if (frequency === 'once') {
         db.prepare('UPDATE chore_templates SET rotation_enabled = 0 WHERE id = ?').run(req.params.id);
       } else if (rot) {
         applyRotation(db, req.params.id, rot, before, today);
@@ -236,7 +245,7 @@ router.patch('/:id', requireActiveMember, requireParent, (req, res) => {
     if (frequency === 'once') {
       db.prepare(`UPDATE chores SET template_id = NULL, occurrence_date = NULL, instance_member_id = NULL WHERE ${openInstances}`)
         .run(req.params.id, todayKey);
-    } else if (Array.isArray(assignedTo) || perMember !== undefined || rotation !== undefined) {
+    } else if (Array.isArray(assignedTo) || perMember !== undefined || rotation !== undefined || upForGrabs !== undefined) {
       reconcileOpenCards(db, req.params.id, todayKey);
     }
 

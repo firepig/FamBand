@@ -122,6 +122,12 @@ export async function uploadPhoto(choreId, file) {
 export async function uploadQuestImage(file) {
   return uploadFile('/api/uploads/quest', 'image', file)
 }
+export async function claimChore(choreId) {
+  return apiFetch(`/api/chores/${choreId}/claim`, { method: 'POST', body: JSON.stringify({}) })
+}
+export async function releaseChore(choreId) {
+  return apiFetch(`/api/chores/${choreId}/release`, { method: 'POST', body: JSON.stringify({}) })
+}
 export async function duplicateChore(choreId, data = {}) {
   return apiFetch(`/api/chores/${choreId}/duplicate`, { method: 'POST', body: JSON.stringify(data) })
 }

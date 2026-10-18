@@ -1,8 +1,9 @@
-import { useState, useContext, useEffect } from 'react';
+import { useState, useContext, useEffect, useRef } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import {
   Badge,
   Button,
+  ButtonGroup,
   Form,
   Modal,
   ProgressBar,
@@ -18,6 +19,7 @@ import {
   FaEdit,
   FaCopy,
   FaSyncAlt,
+  FaHandPaper,
 } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import { formatDateKey } from '../../utils/rotation';
@@ -28,6 +30,9 @@ import {
   rejectChore,
   toggleChecklistItem,
   duplicateChore,
+  claimChore,
+  releaseChore,
+  updateChore,
   fetchTemplate,
   createTemplateOverride,
   deleteTemplateOverride,
@@ -98,6 +103,15 @@ export default function ChoreCard({ chore }) {
   const due = dueDate ?? due_date;
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
+  // A drag shouldn't also count as a tap that opens the dialog.
+  const justDragged = useRef(false);
+  useEffect(() => {
+    if (isDragging) { justDragged.current = true; return undefined; }
+    if (!justDragged.current) return undefined;
+    const timer = setTimeout(() => { justDragged.current = false; }, 200);
+    return () => clearTimeout(timer);
+  }, [isDragging]);
+
   const dragStyle = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 100 : 'auto' }
     : undefined;
@@ -165,6 +179,52 @@ export default function ChoreCard({ chore }) {
     return () => { cancelled = true; };
   }, [showModal, rotation, template_id, templateId]);
 
+  const unclaimed = assignedMembers.length === 0;
+  const iHoldIt = assignedMembers.some((m) => m.id === currentMember?.id);
+  const [statusBusy, setStatusBusy] = useState(false);
+
+  const changeStatus = async (next) => {
+    setStatusBusy(true);
+    try {
+      await updateChore(id, { status: next });
+      if (next === 'done') notify?.('Quest complete! +XP', 'success');
+      else if (unclaimed && !isParent && next === 'in_progress') notify?.('You took this quest!', 'success');
+      refresh();
+    } catch (err) {
+      notify?.(err.message || 'Could not change status', 'error');
+    } finally {
+      setStatusBusy(false);
+    }
+  };
+
+  const handleClaim = async () => {
+    setStatusBusy(true);
+    try {
+      await claimChore(id);
+      notify?.('You took this quest!', 'success');
+      refresh();
+    } catch (err) {
+      notify?.(err.message || 'Could not take this quest', 'error');
+      refresh();
+    } finally {
+      setStatusBusy(false);
+    }
+  };
+
+  const handleRelease = async () => {
+    setStatusBusy(true);
+    try {
+      await releaseChore(id);
+      notify?.('Put back up for grabs', 'info');
+      setShowModal(false);
+      refresh();
+    } catch (err) {
+      notify?.(err.message || 'Could not give this quest back', 'error');
+    } finally {
+      setStatusBusy(false);
+    }
+  };
+
   const changeTurn = async (action) => {
     const tid = template_id || templateId;
     setRotBusy(true);
@@ -222,14 +282,14 @@ export default function ChoreCard({ chore }) {
       <div ref={setNodeRef} style={dragStyle}>
         <div
           className={`rt-chore ${status === 'done' ? 'rt-chore--done' : ''}`}
-          style={{ borderLeft: `6px solid ${catColor}` }}
-          onClick={() => setShowModal(true)}
+          style={{ borderLeft: `6px solid ${catColor}`, WebkitTouchCallout: 'none' }}
+          onClick={() => { if (!justDragged.current) setShowModal(true); }}
+          {...attributes}
+          {...listeners}
         >
           <div className="d-flex justify-content-between align-items-start gap-2">
             <span
               className="rt-chore__title"
-              {...attributes}
-              {...listeners}
               style={{ flex: 1 }}
             >
               {title}
@@ -251,6 +311,11 @@ export default function ChoreCard({ chore }) {
             {category && (
               <span className="rt-chore__cat" style={{ background: catColor }}>
                 {category}
+              </span>
+            )}
+            {assignedMembers.length === 0 && status !== 'done' && (
+              <span className="rt-chore__cat" style={{ background: 'var(--rt-accent)', color: '#0a0918' }} title="Nobody has taken this yet">
+                <FaHandPaper size={8} style={{ marginRight: 3 }} />UP FOR GRABS
               </span>
             )}
             {isRecurring && (
@@ -321,6 +386,44 @@ export default function ChoreCard({ chore }) {
               </Badge>
             )}
           </div>
+
+          {unclaimed && status !== 'done' && status !== 'failed' && (
+            <div className="mb-3 p-2" style={{ border: '2px dashed var(--rt-accent)' }}>
+              <div style={{ color: 'var(--rt-accent)', fontFamily: 'var(--rt-font-display)', fontSize: '0.75rem' }}>
+                <FaHandPaper className="me-1" />UP FOR GRABS
+              </div>
+              <div className="small mb-2" style={{ color: 'var(--rt-ink-dim)' }}>
+                Nobody has taken this quest yet. The first to claim it gets the points.
+              </div>
+              <Button variant="warning" disabled={statusBusy} onClick={handleClaim}>I'll take it!</Button>
+            </div>
+          )}
+
+          {!approved && status !== 'failed' && (
+            <div className="mb-3">
+              <div style={{ color: 'var(--rt-ink-dim)', fontSize: '0.7rem', textTransform: 'uppercase', fontFamily: 'var(--rt-font-display)', marginBottom: 6 }}>
+                Move to
+              </div>
+              <ButtonGroup className="w-100">
+                {[['todo', 'TO DO'], ['in_progress', 'IN PROGRESS'], ['done', 'DONE']].map(([s, label]) => (
+                  <Button key={s} variant={status === s ? 'warning' : 'outline-secondary'}
+                    disabled={statusBusy || status === s} onClick={() => changeStatus(s)}>
+                    {label}
+                  </Button>
+                ))}
+              </ButtonGroup>
+              {unclaimed && !isParent && (
+                <div className="small mt-1" style={{ color: 'var(--rt-ink-dim)' }}>
+                  Moving it to In Progress or Done takes it for you.
+                </div>
+              )}
+              {chore.bounty && iHoldIt && status !== 'done' && (
+                <Button variant="link" size="sm" className="px-0 mt-1" disabled={statusBusy} onClick={handleRelease}>
+                  Give it back (put it up for grabs again)
+                </Button>
+              )}
+            </div>
+          )}
 
           {rotation && rotation.onDuty && (
             <div className="mb-3">

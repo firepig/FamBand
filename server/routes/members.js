@@ -197,7 +197,7 @@ function removeMember(db, member, actingMemberId) {
     db.prepare('DELETE FROM chore_template_assignments WHERE member_id = ?').run(member.id);
     db.prepare(
       `UPDATE chore_templates SET active = 0
-         WHERE family_id = ? AND active = 1
+         WHERE family_id = ? AND active = 1 AND COALESCE(up_for_grabs, 0) = 0
            AND NOT EXISTS (SELECT 1 FROM chore_template_assignments a WHERE a.template_id = chore_templates.id)`
     ).run(member.family_id);
 

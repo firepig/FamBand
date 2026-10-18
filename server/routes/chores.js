@@ -10,6 +10,13 @@ import { imageUpload, deleteUpload, uploadExists, releaseQuestImage } from '../l
 
 const router = Router();
 
+// A quest with nobody assigned is "up for grabs": any player can claim it.
+function markBountyIfUnassigned(db, choreId) {
+  db.prepare(
+    'UPDATE chores SET bounty = CASE WHEN EXISTS (SELECT 1 FROM chore_assignments WHERE chore_id = ?) THEN 0 ELSE 1 END WHERE id = ?'
+  ).run(choreId, choreId);
+}
+
 function getChoreWithRelations(db, id, familyId) {
   const chore = db.prepare('SELECT * FROM chores WHERE id = ? AND family_id = ?').get(id, familyId);
   if (!chore) return null;
@@ -114,6 +121,7 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
           if (item?.text) insertChecklist.run(uuidv4(), choreId, item.text);
         }
       }
+      markBountyIfUnassigned(db, choreId);
     })();
 
     res.status(201).json(getChoreWithRelations(db, choreId, req.familyId));
@@ -161,6 +169,12 @@ router.patch('/:id', requireActiveMember, (req, res) => {
         updateValues.push(req.params.id);
         db.prepare(`UPDATE chores SET ${updateFields.join(', ')} WHERE id = ?`).run(...updateValues);
       }
+      // A child who moves an unclaimed quest into progress (or straight to done) takes it,
+      // so the points go to them. Parents claim explicitly or assign someone.
+      if (!isParent && assignedTo === undefined && (status === 'in_progress' || status === 'done')
+        && !db.prepare('SELECT 1 FROM chore_assignments WHERE chore_id = ? LIMIT 1').get(req.params.id)) {
+        db.prepare('INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)').run(req.params.id, req.currentMember.id);
+      }
       if (Array.isArray(checklist)) {
         // Replace the step list but keep each existing step's id (and so its
         // completed flag); steps the client dropped are removed.
@@ -188,6 +202,7 @@ router.patch('/:id', requireActiveMember, (req, res) => {
         for (const memberId of assignedTo) {
           if (assertFamilyMember(db, memberId, req.familyId)) ins.run(req.params.id, memberId);
         }
+        markBountyIfUnassigned(db, req.params.id);
       }
       if (statusChangingToDone) {
         const updated = db.prepare('SELECT * FROM chores WHERE id = ?').get(req.params.id);
@@ -294,6 +309,56 @@ router.post('/:id/photo', requireActiveMember, requireChoreForPhoto, imageUpload
   }
 });
 
+// POST /:id/claim — take a quest nobody holds. First to claim wins; claiming puts it in progress.
+router.post('/:id/claim', requireActiveMember, (req, res) => {
+  try {
+    const db = getDb();
+    const chore = db.prepare('SELECT * FROM chores WHERE id = ? AND family_id = ?').get(req.params.id, req.familyId);
+    if (!chore) return res.status(404).json({ error: 'Chore not found' });
+    if (chore.status === 'done' || chore.status === 'failed') {
+      return res.status(400).json({ error: 'That quest is already finished' });
+    }
+    let taken = false;
+    db.transaction(() => {
+      if (db.prepare('SELECT 1 FROM chore_assignments WHERE chore_id = ? LIMIT 1').get(chore.id)) { taken = true; return; }
+      db.prepare('INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)').run(chore.id, req.currentMember.id);
+      if (chore.status === 'todo') db.prepare("UPDATE chores SET status = 'in_progress' WHERE id = ?").run(chore.id);
+    })();
+    if (taken) return res.status(409).json({ error: 'Someone already took this quest' });
+    res.json(getChoreWithRelations(db, chore.id, req.familyId));
+  } catch (err) {
+    console.error('Error claiming chore:', err);
+    res.status(500).json({ error: 'Failed to claim quest' });
+  }
+});
+
+// POST /:id/release — give a claimed bounty back (the holder or a parent), unless work has been logged.
+router.post('/:id/release', requireActiveMember, (req, res) => {
+  try {
+    const db = getDb();
+    const chore = db.prepare('SELECT * FROM chores WHERE id = ? AND family_id = ?').get(req.params.id, req.familyId);
+    if (!chore) return res.status(404).json({ error: 'Chore not found' });
+    if (!chore.bounty) return res.status(400).json({ error: 'Only up-for-grabs quests can be given back' });
+    if (chore.status === 'done' || chore.status === 'failed') {
+      return res.status(400).json({ error: 'That quest is already finished' });
+    }
+    const holders = db.prepare('SELECT member_id FROM chore_assignments WHERE chore_id = ?').all(chore.id).map((r) => r.member_id);
+    const isParent = req.currentMember.role === 'parent';
+    if (!isParent && !holders.includes(req.currentMember.id)) return res.status(403).json({ error: 'Not your quest' });
+    const loggedWork = !!chore.photo_proof
+      || !!db.prepare('SELECT 1 FROM checklist_items WHERE chore_id = ? AND completed = 1 LIMIT 1').get(chore.id);
+    if (loggedWork) return res.status(400).json({ error: 'Work has already been logged on this quest' });
+    db.transaction(() => {
+      db.prepare('DELETE FROM chore_assignments WHERE chore_id = ?').run(chore.id);
+      db.prepare("UPDATE chores SET status = 'todo' WHERE id = ?").run(chore.id);
+    })();
+    res.json(getChoreWithRelations(db, chore.id, req.familyId));
+  } catch (err) {
+    console.error('Error releasing chore:', err);
+    res.status(500).json({ error: 'Failed to give back quest' });
+  }
+});
+
 // POST /:id/make-repeating — turn a one-off quest into a repeating one (parent only).
 // Creates a template from the quest. If today is a scheduled day, the quest itself
 // becomes today's occurrence so nothing is duplicated; otherwise it stays a one-off
@@ -320,6 +385,9 @@ router.post('/:id/make-repeating', requireActiveMember, requireParent, (req, res
     const steps = db.prepare('SELECT text FROM checklist_items WHERE chore_id = ? ORDER BY rowid ASC').all(chore.id);
 
     const started = choreHasProgress(db, chore);
+
+    // Nobody assigned: the series is a repeating bounty (one unassigned card a day).
+    const upForGrabs = assigned.length === 0;
 
     // Optional rotation: players take turns (one card a day for whoever is on duty).
     const rot = parseRotation(req.body?.rotation);
@@ -356,11 +424,12 @@ router.post('/:id/make-repeating', requireActiveMember, requireParent, (req, res
     db.transaction(() => {
       db.prepare(
         `INSERT INTO chore_templates
-          (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member, image)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+          (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member, image, up_for_grabs)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
       ).run(
         tplId, req.familyId, chore.title, chore.description || '', chore.points, chore.category || 'Chore',
-        req.currentMember.id, frequency, days, interval, startDate, endDate, perMemberFinal ? 1 : 0, chore.image || null
+        req.currentMember.id, frequency, days, interval, startDate, endDate, perMemberFinal ? 1 : 0, chore.image || null,
+        upForGrabs ? 1 : 0
       );
       setOrder(db, tplId, turnOrder);
       if (wantsRotation) applyRotation(db, tplId, rot, { enabled: false, order: [] }, new Date());
@@ -441,14 +510,14 @@ router.post('/:id/duplicate', requireActiveMember, requireParent, (req, res) => 
           db.prepare(
             `INSERT INTO chore_templates
               (id, family_id, title, description, points, category, created_by, frequency, days_of_week, interval, start_date, end_date, active, per_member, image,
-               rotation_enabled, rotation_every_weeks, rotation_start_dow, rotation_anchor_date, rotation_anchor_member)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+               rotation_enabled, rotation_every_weeks, rotation_start_dow, rotation_anchor_date, rotation_anchor_member, up_for_grabs)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
             tplId, req.familyId, tpl.title, tpl.description || '', tpl.points, tpl.category,
             req.currentMember.id, tpl.frequency, tpl.days_of_week || '', tpl.interval, tpl.start_date,
             tpl.end_date, tpl.active, tpl.per_member, tpl.image || null,
             tpl.rotation_enabled || 0, tpl.rotation_every_weeks || 1, tpl.rotation_start_dow || 0,
-            tpl.rotation_anchor_date || null, tpl.rotation_anchor_member || null
+            tpl.rotation_anchor_date || null, tpl.rotation_anchor_member || null, tpl.up_for_grabs || 0
           );
           db.prepare('INSERT INTO chore_template_assignments (template_id, member_id, position) SELECT ?, member_id, position FROM chore_template_assignments WHERE template_id = ?')
             .run(tplId, tpl.id);
@@ -482,6 +551,7 @@ router.post('/:id/duplicate', requireActiveMember, requireParent, (req, res) => 
       for (const a of assigns) insertAssign.run(newId, a.member_id);
       const steps = db.prepare('SELECT text FROM checklist_items WHERE chore_id = ? ORDER BY rowid ASC').all(src.id);
       for (const s of steps) if (s.text) insertStep.run(uuidv4(), newId, s.text);
+      markBountyIfUnassigned(db, newId);
     })();
 
     res.status(201).json(getChoreWithRelations(db, newId, req.familyId));
