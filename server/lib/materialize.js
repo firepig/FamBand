@@ -70,8 +70,8 @@ export function materializeChores(db, familyId) {
     const insertChore = db.prepare(
       `INSERT INTO chores
         (id, family_id, title, description, points, status, created_by, due_date, category,
-         template_id, occurrence_date, instance_member_id)
-       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?)`
+         template_id, occurrence_date, instance_member_id, image)
+       VALUES (?, ?, ?, ?, ?, 'todo', ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertAssign = db.prepare(
       'INSERT OR IGNORE INTO chore_assignments (chore_id, member_id) VALUES (?, ?)'
@@ -86,7 +86,7 @@ export function materializeChores(db, familyId) {
         insertChore.run(
           choreId, familyId, tpl.title, tpl.description || '', tpl.points || 10,
           tpl.created_by, todayKey, tpl.category || 'Chore',
-          tpl.id, todayKey, instanceMemberId,
+          tpl.id, todayKey, instanceMemberId, tpl.image || null,
         );
       } catch (err) {
         // Unique index conflict (already exists) — skip

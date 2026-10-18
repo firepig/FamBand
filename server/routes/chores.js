@@ -1,26 +1,9 @@
 import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import multer from 'multer';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { getDb } from '../db.js';
 import { materializeChores } from '../lib/materialize.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadsDir = path.resolve(__dirname, '..', '..', 'public', 'photos');
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, uuidv4() + ext);
-  },
-});
-const upload = multer({ storage });
+import { imageUpload, deleteUpload, uploadExists, releaseQuestImage } from '../lib/uploads.js';
 
 const router = Router();
 
@@ -76,15 +59,16 @@ router.get('/', (req, res) => {
 // POST / — create chore (parent only)
 router.post('/', requireActiveMember, requireParent, (req, res) => {
   try {
-    const { title, description, points, assignedTo, dueDate, category, checklist } = req.body;
+    const { title, description, points, assignedTo, dueDate, category, checklist, image } = req.body;
     if (!title) return res.status(400).json({ error: 'Title is required' });
+    if (image != null && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
 
     const db = getDb();
     const choreId = uuidv4();
 
     const insertChore = db.prepare(
-      `INSERT INTO chores (id, family_id, title, description, points, created_by, due_date, category)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO chores (id, family_id, title, description, points, created_by, due_date, category, image)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insertAssignment = db.prepare(
       'INSERT INTO chore_assignments (chore_id, member_id) VALUES (?, ?)'
@@ -96,7 +80,7 @@ router.post('/', requireActiveMember, requireParent, (req, res) => {
     db.transaction(() => {
       insertChore.run(
         choreId, req.familyId, title, description || '', points || 10,
-        req.currentMember.id, dueDate || null, category || 'general'
+        req.currentMember.id, dueDate || null, category || 'general', image || null
       );
       if (Array.isArray(assignedTo)) {
         for (const memberId of assignedTo) {
@@ -126,14 +110,17 @@ router.patch('/:id', requireActiveMember, (req, res) => {
       .get(req.params.id, req.familyId);
     if (!chore) return res.status(404).json({ error: 'Chore not found' });
 
-    const { title, description, points, status, dueDate, category, assignedTo } = req.body;
+    const { title, description, points, status, dueDate, category, assignedTo, image } = req.body;
     const isParent = req.currentMember.role === 'parent';
     const touchesParentOnly =
       title !== undefined || description !== undefined || points !== undefined ||
-      dueDate !== undefined || category !== undefined || assignedTo !== undefined;
+      dueDate !== undefined || category !== undefined || assignedTo !== undefined ||
+      image !== undefined;
     if (touchesParentOnly && !isParent) {
       return res.status(403).json({ error: 'Parent access required for these fields' });
     }
+
+    if (image != null && !uploadExists('quest', image)) return res.status(400).json({ error: 'Unknown image' });
 
     const statusChangingToDone = status === 'done' && chore.status !== 'done';
 
@@ -145,6 +132,7 @@ router.patch('/:id', requireActiveMember, (req, res) => {
     if (status !== undefined) { updateFields.push('status = ?'); updateValues.push(status); }
     if (dueDate !== undefined) { updateFields.push('due_date = ?'); updateValues.push(dueDate); }
     if (category !== undefined) { updateFields.push('category = ?'); updateValues.push(category); }
+    if (image !== undefined) { updateFields.push('image = ?'); updateValues.push(image || null); }
 
     db.transaction(() => {
       if (updateFields.length > 0) {
@@ -176,6 +164,8 @@ router.patch('/:id', requireActiveMember, (req, res) => {
       }
     })();
 
+    if (image !== undefined && chore.image && chore.image !== image) releaseQuestImage(db, chore.image);
+
     res.json(getChoreWithRelations(db, req.params.id, req.familyId));
   } catch (err) {
     console.error('Error updating chore:', err);
@@ -187,10 +177,12 @@ router.patch('/:id', requireActiveMember, (req, res) => {
 router.delete('/:id', requireActiveMember, requireParent, (req, res) => {
   try {
     const db = getDb();
-    const chore = db.prepare('SELECT id FROM chores WHERE id = ? AND family_id = ?')
+    const chore = db.prepare('SELECT id, image, photo_proof FROM chores WHERE id = ? AND family_id = ?')
       .get(req.params.id, req.familyId);
     if (!chore) return res.status(404).json({ error: 'Chore not found' });
     db.prepare('DELETE FROM chores WHERE id = ?').run(req.params.id);
+    deleteUpload('photo', chore.photo_proof);
+    releaseQuestImage(db, chore.image);
     res.json({ message: 'Chore deleted' });
   } catch (err) {
     console.error('Error deleting chore:', err);
@@ -237,18 +229,24 @@ router.patch('/:id/checklist/:itemId', requireActiveMember, (req, res) => {
 });
 
 // POST /:id/photo — upload proof (any family member)
-router.post('/:id/photo', requireActiveMember, upload.single('photo'), (req, res) => {
+function requireChoreForPhoto(req, res, next) {
+  const chore = getDb().prepare('SELECT id, photo_proof FROM chores WHERE id = ? AND family_id = ?')
+    .get(req.params.id, req.familyId);
+  if (!chore) return res.status(404).json({ error: 'Chore not found' });
+  req.chore = chore;
+  next();
+}
+
+router.post('/:id/photo', requireActiveMember, requireChoreForPhoto, imageUpload('photo', 'photo'), (req, res) => {
   try {
     const db = getDb();
-    const chore = db.prepare('SELECT id FROM chores WHERE id = ? AND family_id = ?')
-      .get(req.params.id, req.familyId);
-    if (!chore) return res.status(404).json({ error: 'Chore not found' });
-    if (!req.file) return res.status(400).json({ error: 'No photo file provided' });
-    const filename = req.file.filename;
-    db.prepare('UPDATE chores SET photo_proof = ? WHERE id = ?').run(filename, req.params.id);
+    const filename = req.upload.filename;
+    db.prepare('UPDATE chores SET photo_proof = ? WHERE id = ?').run(filename, req.chore.id);
+    deleteUpload('photo', req.chore.photo_proof);
     res.json({ photoUrl: '/photos/' + filename });
   } catch (err) {
     console.error('Error uploading photo:', err);
+    deleteUpload('photo', req.upload?.filename);
     res.status(500).json({ error: 'Failed to upload photo' });
   }
 });

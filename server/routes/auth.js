@@ -225,6 +225,35 @@ router.post('/reset-password', loginLimiter, async (req, res, next) => {
   }
 });
 
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(8).max(200),
+});
+
+// Change the family account password (signed-in parent; requires the current password).
+router.post('/change-password', loginLimiter, requireUser, requireActiveMember, async (req, res, next) => {
+  try {
+    if (req.currentMember.role !== 'parent') return res.status(403).json({ error: 'Parent only' });
+    const { currentPassword, newPassword } = changePasswordSchema.parse(req.body);
+    const db = getDb();
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    if (!user || !(await bcrypt.compare(currentPassword, user.password_hash))) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: 'New password must be different' });
+    }
+    const newHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, user.id);
+    res.json({ ok: true });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return res.status(400).json({ error: err.issues[0]?.path?.[0] === 'newPassword' ? 'New password must be at least 8 characters' : 'Invalid input' });
+    }
+    next(err);
+  }
+});
+
 // Regenerate recovery codes (requires active member = parent)
 router.post('/regenerate-recovery-codes', requireUser, requireActiveMember, async (req, res, next) => {
   try {
