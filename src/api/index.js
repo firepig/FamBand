@@ -168,6 +168,14 @@ export async function redeemSnack(snackId) {
   return apiFetch('/api/points/redeem', { method: 'POST', body: JSON.stringify({ snackId }) })
 }
 
+export async function cashOut(blocks) {
+  return apiFetch('/api/points/cash-out', { method: 'POST', body: JSON.stringify({ blocks }) })
+}
+export async function fetchCashOuts() { return apiFetch('/api/points/cash-outs') }
+export async function markCashOutPaid(id) {
+  return apiFetch(`/api/points/cash-outs/${id}/paid`, { method: 'POST', body: JSON.stringify({}) })
+}
+
 // --- Bulletin ---
 export async function fetchBulletinPosts() { return apiFetch('/api/bulletin') }
 export async function createBulletinPost(data) {

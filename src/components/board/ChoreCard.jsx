@@ -302,7 +302,7 @@ export default function ChoreCard({ chore }) {
           <div className="rt-chore__meta">
             {assignedMembers.slice(0, 4).map((m) => (
               <span key={m.id} className="rt-chore__avatar" title={m.name}>
-                <Avatar avatar={m.avatar} />
+                <Avatar avatar={m.avatar} size="100%" />
               </span>
             ))}
             {assignedMembers.length > 4 && (

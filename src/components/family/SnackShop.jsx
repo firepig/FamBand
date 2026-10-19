@@ -22,6 +22,7 @@ import {
   FaTimes,
   FaLock,
   FaRedoAlt,
+  FaMoneyBillWave,
 } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import {
@@ -32,6 +33,7 @@ import {
   fetchPoints,
   redeemSnack,
 } from '../../api';
+import { CashOutPanel, CashLedger } from './CashOut';
 
 const FOOD_EMOJIS = [
   '🍎', '🍕', '🍔', '🍟', '🌮', '🍩', '🍪', '🍦', '🍰', '🧁',
@@ -284,6 +286,7 @@ export default function SnackShop() {
       const result = await redeemSnack(snack.id);
       setPoints(result.balance ?? points - snack.cost);
       setShowCoinAnim(true);
+      window.dispatchEvent(new Event('points-changed'));
       setSuccessMsg(`Enjoy your ${snack.name}!`);
       setTimeout(() => {
         setShowCoinAnim(false);
@@ -461,6 +464,13 @@ export default function SnackShop() {
                 <FaShoppingCart size={12} /> Shop
               </Nav.Link>
             </Nav.Item>
+            {currentMember && (
+              <Nav.Item>
+                <Nav.Link eventKey="cash" className="d-flex align-items-center gap-1">
+                  <FaMoneyBillWave size={12} /> Cash
+                </Nav.Link>
+              </Nav.Item>
+            )}
             <Nav.Item>
               <Nav.Link eventKey="history" className="d-flex align-items-center gap-1">
                 <FaHistory size={12} /> History
@@ -471,6 +481,16 @@ export default function SnackShop() {
           {/* Shop Tab */}
           {activeTab === 'shop' && (
             <>
+              {currentMember && (
+                <CashOutPanel
+                  points={points}
+                  onDone={(balance, msg) => {
+                    setPoints(balance);
+                    setSuccessMsg(msg);
+                    setTimeout(() => setSuccessMsg(''), 3500);
+                  }}
+                />
+              )}
               {snacks.length === 0 ? (
                 <div className="text-center py-5 text-muted">
                   <FaShoppingCart size={48} className="mb-3 opacity-50" />
@@ -527,6 +547,9 @@ export default function SnackShop() {
               )}
             </>
           )}
+
+          {/* Cash Tab */}
+          {activeTab === 'cash' && currentMember && <CashLedger isParent={isParent} />}
 
           {/* History Tab */}
           {activeTab === 'history' && (

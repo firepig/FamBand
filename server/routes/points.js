@@ -2,12 +2,94 @@ import { Router } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { getDb } from '../db.js';
 import { requireActiveMember, requireParent } from '../middleware/auth.js';
+import { POINTS_PER_BLOCK, CENTS_PER_BLOCK, MAX_BLOCKS } from '../lib/cash.js';
 
 const router = Router();
 
 function memberInFamily(db, memberId, familyId) {
   return !!db.prepare('SELECT 1 FROM family_members WHERE id = ? AND family_id = ?').get(memberId, familyId);
 }
+
+function balanceOf(db, memberId) {
+  const earned = db.prepare(
+    "SELECT COALESCE(SUM(amount), 0) as total FROM points_ledger WHERE member_id = ? AND type IN ('earned','released')"
+  ).get(memberId);
+  const spent = db.prepare(
+    "SELECT COALESCE(SUM(amount), 0) as total FROM points_ledger WHERE member_id = ? AND type = 'spent'"
+  ).get(memberId);
+  return earned.total - spent.total;
+}
+
+// GET /cash-outs — parents see everyone's, kids see their own. Must stay above /:memberId.
+router.get('/cash-outs', requireActiveMember, (req, res) => {
+  try {
+    const db = getDb();
+    const rows = db.prepare(
+      `SELECT c.*, m.name AS member_name, m.avatar AS member_avatar
+         FROM cash_outs c LEFT JOIN family_members m ON m.id = c.member_id
+        WHERE c.family_id = ? ${req.currentMember.role === 'parent' ? '' : 'AND c.member_id = ?'}
+        ORDER BY (c.status = 'owed') DESC, c.created_at DESC LIMIT 200`
+    ).all(...(req.currentMember.role === 'parent' ? [req.familyId] : [req.familyId, req.currentMember.id]));
+    res.json({ rate: { points: POINTS_PER_BLOCK, cents: CENTS_PER_BLOCK }, cashOuts: rows });
+  } catch (err) {
+    console.error('Error listing cash-outs:', err);
+    res.status(500).json({ error: 'Failed to load cash-outs' });
+  }
+});
+
+// POST /cash-out — the active member converts whole blocks of points to cash they are owed.
+router.post('/cash-out', requireActiveMember, (req, res) => {
+  try {
+    const blocks = Number(req.body?.blocks);
+    if (!Number.isInteger(blocks) || blocks < 1 || blocks > MAX_BLOCKS) {
+      return res.status(400).json({ error: `Choose between 1 and ${MAX_BLOCKS} cash-out blocks` });
+    }
+    const db = getDb();
+    const memberId = req.currentMember.id;
+    const points = blocks * POINTS_PER_BLOCK;
+    const cents = blocks * CENTS_PER_BLOCK;
+    let balance;
+    const id = uuidv4();
+    db.transaction(() => {
+      balance = balanceOf(db, memberId);
+      if (balance < points) {
+        const err = new Error('Not enough points');
+        err.insufficient = true;
+        throw err;
+      }
+      db.prepare(
+        `INSERT INTO points_ledger (id, family_id, member_id, amount, type, description)
+         VALUES (?, ?, ?, ?, 'spent', ?)`
+      ).run(uuidv4(), req.familyId, memberId, points, `Cash out $${(cents / 100).toFixed(2)}`);
+      db.prepare(
+        'INSERT INTO cash_outs (id, family_id, member_id, points, cents) VALUES (?, ?, ?, ?, ?)'
+      ).run(id, req.familyId, memberId, points, cents);
+    })();
+    res.status(201).json({ success: true, id, points, cents, balance: balance - points });
+  } catch (err) {
+    if (err.insufficient) {
+      return res.status(400).json({ error: 'Not enough points' });
+    }
+    console.error('Error cashing out:', err);
+    res.status(500).json({ error: 'Failed to cash out' });
+  }
+});
+
+// POST /cash-outs/:id/paid — parent confirms the cash was handed over
+router.post('/cash-outs/:id/paid', requireActiveMember, requireParent, (req, res) => {
+  try {
+    const db = getDb();
+    const result = db.prepare(
+      `UPDATE cash_outs SET status = 'paid', paid_at = datetime('now'), paid_by = ?
+        WHERE id = ? AND family_id = ? AND status = 'owed'`
+    ).run(req.currentMember.id, req.params.id, req.familyId);
+    if (!result.changes) return res.status(404).json({ error: 'No unpaid cash-out found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error marking cash-out paid:', err);
+    res.status(500).json({ error: 'Failed to update cash-out' });
+  }
+});
 
 // GET /:memberId — balance, ledger, achievements
 router.get('/:memberId', (req, res) => {
