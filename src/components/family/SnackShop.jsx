@@ -23,6 +23,7 @@ import {
   FaLock,
   FaRedoAlt,
   FaMoneyBillWave,
+  FaGift,
 } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
 import {
@@ -34,6 +35,7 @@ import {
   redeemSnack,
 } from '../../api';
 import { CashOutPanel, CashLedger } from './CashOut';
+import GiftPoints from './GiftPoints';
 
 const FOOD_EMOJIS = [
   '🍎', '🍕', '🍔', '🍟', '🌮', '🍩', '🍪', '🍦', '🍰', '🧁',
@@ -471,6 +473,13 @@ export default function SnackShop() {
                 </Nav.Link>
               </Nav.Item>
             )}
+            {currentMember && (
+              <Nav.Item>
+                <Nav.Link eventKey="gifts" className="d-flex align-items-center gap-1">
+                  <FaGift size={12} /> Gifts
+                </Nav.Link>
+              </Nav.Item>
+            )}
             <Nav.Item>
               <Nav.Link eventKey="history" className="d-flex align-items-center gap-1">
                 <FaHistory size={12} /> History
@@ -546,6 +555,18 @@ export default function SnackShop() {
                 </Row>
               )}
             </>
+          )}
+
+          {/* Gifts Tab */}
+          {activeTab === 'gifts' && currentMember && (
+            <GiftPoints
+              points={points}
+              onSent={(balance, msg) => {
+                setPoints(balance);
+                setSuccessMsg(msg);
+                setTimeout(() => setSuccessMsg(''), 3500);
+              }}
+            />
           )}
 
           {/* Cash Tab */}

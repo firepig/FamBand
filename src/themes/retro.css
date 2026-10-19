@@ -757,3 +757,27 @@ html[data-theme="retro"] body::before {
   .rt-chore__title { font-size: 0.65rem; }
   .rt-column { min-height: 220px; }
 }
+
+/* Billboard: read-only wall display, sized to be read from across the room */
+.rt-billboard__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .rt-billboard__grid { grid-template-columns: 1fr; }
+}
+.rt-billboard__clock {
+  font-family: var(--rt-font-display);
+  color: var(--rt-ink-dim);
+  font-size: 0.9rem;
+}
+.rt-billboard .rt-chore__title { font-size: 1.05rem; }
+.rt-billboard .rt-chore__points { font-size: 0.85rem; }
+.rt-billboard .rt-chore__meta { font-size: 1rem; gap: 10px; }
+.rt-billboard .rt-chore__cat { font-size: 0.7rem; padding: 3px 7px; }
+.rt-billboard .rt-chore__avatar { width: 64px; height: 64px; font-size: 2.4rem; }
+.rt-billboard__name { font-family: var(--rt-font-display); font-size: 0.8rem; color: var(--rt-ink); padding-bottom: 4px; }
+.rt-billboard__next { margin-top: 6px; font-size: 0.9rem; color: var(--rt-ink-dim); }
+.rt-billboard .rt-column__title { font-size: 1.1rem; }

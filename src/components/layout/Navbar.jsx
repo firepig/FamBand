@@ -1,5 +1,5 @@
 import { useState, useEffect, useContext } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Navbar as BsNavbar, Nav, NavDropdown, Badge, Container, Spinner } from 'react-bootstrap';
 import { FaStar, FaUser, FaCrown, FaGamepad } from 'react-icons/fa';
 import AppContext from '../../context/AppContext';
@@ -9,6 +9,7 @@ import Avatar from '../common/Avatar';
 export default function Navbar() {
   const { members, currentMember, switchMember, logout, isParent, chores, stats, snacks } = useContext(AppContext);
   const location = useLocation();
+  const navigate = useNavigate();
   const [points, setPoints] = useState(null);
   const [pointsTick, setPointsTick] = useState(0);
   const [pointsLoading, setPointsLoading] = useState(false);
@@ -122,6 +123,9 @@ export default function Navbar() {
               </NavDropdown.Item>
               <NavDropdown.Item onClick={() => switchMember()}>
                 Switch player
+              </NavDropdown.Item>
+              <NavDropdown.Item onClick={async () => { await switchMember(); navigate('/billboard'); }}>
+                Billboard view
               </NavDropdown.Item>
               <NavDropdown.Divider />
               <NavDropdown.Item onClick={() => logout()}>

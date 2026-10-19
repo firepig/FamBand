@@ -4,6 +4,7 @@ import { Row, Col, Spinner } from 'react-bootstrap'
 import { AppProvider, AppContext } from './context/AppContext'
 import Layout from './components/layout/Layout'
 import KanbanBoard from './components/board/KanbanBoard'
+import Billboard from './components/board/Billboard'
 import BulletinBoard from './components/family/BulletinBoard'
 import HomeworkChart from './components/family/HomeworkChart'
 import SnackShop from './components/family/SnackShop'
@@ -83,6 +84,8 @@ function AppContent() {
         <Route path="/select-member" element={
           <RequireUser>{currentMember ? <Navigate to="/" replace /> : <SelectMember />}</RequireUser>
         } />
+
+        <Route path="/billboard" element={<RequireUser><Billboard /></RequireUser>} />
 
         <Route element={<RequireActiveMember><Layout /></RequireActiveMember>}>
           <Route path="/" element={loading ? <FullSpinner /> : <><PointsBar /><KanbanBoard /></>} />
